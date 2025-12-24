@@ -54,6 +54,37 @@ fun TourItem(
 
                 // Цена и кнопки
                 Column(horizontalAlignment = Alignment.End) {
+                    // РЕЙТИНГ
+                    if (tour.rating != null) {
+                        val ratingColor = when {
+                            tour.rating >= 4.0 -> Color(0xFF2E7D32) // Зеленый
+                            tour.rating >= 3.0 -> Color(0xFFF9A825) // Желтый
+                            else -> Color(0xFFC62828)               // Красный
+                        }
+
+                        Surface(
+                            color = ratingColor,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        ) {
+                            Text(
+                                text = "★ ${tour.rating}",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = "Нет оценок",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.LightGray,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                    }
+
+                    // ЦЕНА
                     Text(
                         text = "${tour.cost} ₽",
                         style = MaterialTheme.typography.titleMedium,

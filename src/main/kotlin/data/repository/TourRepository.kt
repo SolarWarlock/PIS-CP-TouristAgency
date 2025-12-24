@@ -13,6 +13,8 @@ import org.jetbrains.exposed.sql.transactions.TransactionManager
 import java.sql.Date
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import data.table.TourRatingsView
+import org.jetbrains.exposed.sql.JoinType // <--- Важный импорт
 
 class TourRepository {
 
@@ -22,9 +24,19 @@ class TourRepository {
         maxPrice: Double? = null
     ): List<Tour> = dbQuery {
 
-        val query = (ToursTable innerJoin TourTypesTable innerJoin PartnersTable)
+        // Сложный JOIN: (Tours + Types + Partners) LEFT JOIN RatingsView
+        val query = ToursTable
+            .innerJoin(TourTypesTable)
+            .innerJoin(PartnersTable)
+            .join(
+                TourRatingsView,
+                JoinType.LEFT,
+                onColumn = ToursTable.id,
+                otherColumn = TourRatingsView.tourId
+            )
             .selectAll()
 
+        // Фильтры (без изменений)
         if (searchQuery.isNotEmpty()) {
             query.andWhere { ToursTable.destination like "%$searchQuery%" }
         }
@@ -36,6 +48,9 @@ class TourRepository {
             val start = row[ToursTable.startDate].format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))
             val end = row[ToursTable.endDate].format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))
 
+            // Пытаемся достать рейтинг (он может быть null, если отзывов нет)
+            val avgRating = row.getOrNull(TourRatingsView.avgRating)?.toDouble()
+
             Tour(
                 id = row[ToursTable.id],
                 destination = row[ToursTable.destination],
@@ -43,7 +58,8 @@ class TourRepository {
                 partnerName = row[PartnersTable.name],
                 cost = row[ToursTable.baseCost].toDouble(),
                 dates = "$start - $end",
-                description = row[ToursTable.description]
+                description = row[ToursTable.description],
+                rating = avgRating // <--- Записываем рейтинг
             )
         }
     }

@@ -126,6 +126,15 @@ object MainScreen : Screen {
                         )
                     }
 
+                    if (ui.common.UserSession.isManager || ui.common.UserSession.isFinancier) {
+                        NavRailItem(
+                            icon = Icons.Default.Star, // Или Comment
+                            label = "Отзывы",
+                            isSelected = navigator.lastItem is ui.screens.reports.ReviewsListScreen,
+                            onClick = { navigator.replace(ui.screens.reports.ReviewsListScreen) }
+                        )
+                    }
+
                     Spacer(Modifier.weight(1f))
 
                     // КНОПКА ВЫХОДА

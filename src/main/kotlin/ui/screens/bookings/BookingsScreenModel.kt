@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import ui.common.UserSession
+import data.repository.ReviewRepository
 
 sealed class BookingsListState {
     data object Loading : BookingsListState()
@@ -18,7 +19,8 @@ sealed class BookingsListState {
 
 class BookingsScreenModel(
     private val repository: BookingRepository,
-    private val paymentRepository: PaymentRepository
+    private val paymentRepository: PaymentRepository,
+    private val reviewRepository: ReviewRepository
 ) : ScreenModel {
 
     private val _state = MutableStateFlow<BookingsListState>(BookingsListState.Loading)
@@ -83,6 +85,18 @@ class BookingsScreenModel(
                 loadData()
             } catch (e: Exception) {
                 _state.value = BookingsListState.Error("Ошибка оплаты: ${e.message}")
+            }
+        }
+    }
+
+    fun sendReview(tourId: Int, rating: Int, comment: String) {
+        screenModelScope.launch {
+            try {
+                val clientId = UserSession.currentClient?.id ?: throw Exception("Нет авторизации")
+                reviewRepository.addReview(tourId, clientId, rating, comment)
+                // Можно показать уведомление об успехе
+            } catch (e: Exception) {
+                _state.value = BookingsListState.Error("Ошибка (возможно, вы уже оценили этот тур): ${e.message}")
             }
         }
     }

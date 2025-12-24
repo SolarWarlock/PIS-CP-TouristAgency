@@ -3,16 +3,6 @@ package data.model
 import java.time.LocalDate
 import java.time.LocalDateTime
 
-// Модель для отображения Тура в каталоге
-data class Tour(
-    val id: Int,
-    val destination: String,
-    val typeName: String,
-    val partnerName: String,
-    val cost: Double,
-    val dates: String, // "01.01.2025 - 10.01.2025"
-    val description: String?
-)
 
 // Модель сотрудника (текущего пользователя)
 data class Employee(
@@ -40,16 +30,6 @@ data class Debtor(
     val debt: Double // Остаток долга
 )
 
-data class Booking(
-    val id: Int,
-    val tourName: String,
-    val clientName: String?,
-    val date: String,
-    val status: String,
-    val paymentStatus: String,
-    val price: Double,
-    val paidAmount: Double = 0.0
-)
 
 data class AuditLogEntry(
     val id: Long,
@@ -63,4 +43,38 @@ data class AuditLogEntry(
 data class LookupItem(
     val id: Int,
     val name: String
+)
+
+data class Tour(
+    val id: Int,
+    val destination: String,
+    val typeName: String,
+    val partnerName: String,
+    val cost: Double,
+    val dates: String,
+    val description: String?,
+    val rating: Double?
+)
+
+// 2. Новый класс для списка отзывов
+data class ReviewItem(
+    val id: Int,
+    val tourName: String,
+    val clientName: String,
+    val date: String,
+    val rating: Int,
+    val comment: String
+)
+
+data class Booking(
+    val id: Int,
+    val tourId: Int,          // <--- НОВОЕ ПОЛЕ
+    val tourName: String,
+    val clientName: String?,
+    val date: String,
+    val status: String,
+    val paymentStatus: String,
+    val price: Double,
+    val paidAmount: Double,
+    val hasReview: Boolean = false //
 )

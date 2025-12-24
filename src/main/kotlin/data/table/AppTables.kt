@@ -109,3 +109,21 @@ object AuditLogTable : Table("auditlog") {
 
     override val primaryKey = PrimaryKey(id)
 }
+
+object ReviewsTable : Table("reviews") {
+    val id = integer("reviewid").autoIncrement()
+    val tourId = integer("tourid") references ToursTable.id
+    val clientId = integer("clientid") references ClientsTable.id
+    val date = datetime("reviewdate")
+    val description = text("description").nullable()
+    val rating = integer("rating")
+
+    override val primaryKey = PrimaryKey(id)
+}
+
+// Описываем View как таблицу (только для чтения)
+object TourRatingsView : Table("view_tourratings") {
+    val tourId = integer("tourid")
+    val reviewCount = integer("reviewcount")
+    val avgRating = decimal("averagerating", 2, 1) // Например: 4.5
+}
