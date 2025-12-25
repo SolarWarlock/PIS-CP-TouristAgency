@@ -8,6 +8,8 @@ import data.repository.AdminRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import util.ExcelService
+
 
 sealed class AdminState {
     object Loading : AdminState()
@@ -80,6 +82,44 @@ class AdminScreenModel(
             } catch (ex: Exception) {
                 // Если есть связанные записи (брони), база вернет ошибку, и мы покажем её
                 _state.value = AdminState.Error("Нельзя удалить: у сотрудника есть связанные данные (туры или брони).")
+            }
+        }
+    }
+
+    fun exportLogs(path: String) {
+        screenModelScope.launch {
+            try {
+                // 1. Загружаем свежие данные из БД
+                val logs = repository.getAuditLogs()
+
+                // 2. Генерируем файл
+                ExcelService.generateAuditReport(logs, path)
+
+                // (Опционально) Можно обновить состояние или вывести лог в консоль
+                println("Логи успешно выгружены в $path")
+            } catch (e: Exception) {
+                println("Ошибка экспорта: ${e.message}")
+            }
+        }
+    }
+
+    fun createBackup(path: String) {
+        screenModelScope.launch {
+            try {
+                // Сообщаем, что процесс пошел
+                _state.value = AdminState.Loading // Или можно сделать отдельное состояние для сообщений
+
+                val isSuccess = util.BackupService.makeBackup(path)
+
+                if (isSuccess) {
+                    // После успеха перезагружаем логи, чтобы вернуть состояние контента
+                    loadLogs()
+                    println("Бэкап успешно создан: $path")
+                } else {
+                    _state.value = AdminState.Error("Ошибка создания бэкапа (см. консоль). Проверьте, установлен ли pg_dump в PATH.")
+                }
+            } catch (e: Exception) {
+                _state.value = AdminState.Error("Ошибка: ${e.message}")
             }
         }
     }

@@ -40,4 +40,24 @@ class ReportsScreenModel(
             }
         }
     }
+
+    fun exportDebtors(path: String) {
+        screenModelScope.launch {
+            try {
+                val data = repository.getDebtorsReport()
+                ExcelService.generateDebtorsReport(data, path)
+                _status.value = "Сохранено: $path"
+            } catch (e: Exception) { _status.value = "Ошибка: ${e.message}" }
+        }
+    }
+
+    fun exportPaymentLog(path: String) {
+        screenModelScope.launch {
+            try {
+                val data = repository.getAllPaymentsLog()
+                ExcelService.generatePaymentLogReport(data, path)
+                _status.value = "Сохранено: $path"
+            } catch (e: Exception) { _status.value = "Ошибка: ${e.message}" }
+        }
+    }
 }

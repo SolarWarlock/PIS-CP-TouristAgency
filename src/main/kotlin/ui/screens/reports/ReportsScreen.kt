@@ -3,7 +3,9 @@ package ui.screens.reports
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -49,6 +51,28 @@ object ReportsScreen : Screen {
                         if (path != null) viewModel.exportFinance(path)
                     }
                 )
+
+                if (ui.common.UserSession.isFinancier) {
+                    ReportCard(
+                        title = "Реестр должников",
+                        desc = "Список неоплаченных бронирований",
+                        icon = Icons.Default.Warning, // Импортируй
+                        onClick = {
+                            val path = saveFileDialog("debtors.xlsx")
+                            if (path != null) viewModel.exportDebtors(path)
+                        }
+                    )
+
+                    ReportCard(
+                        title = "Журнал транзакций",
+                        desc = "Полная история всех платежей",
+                        icon = Icons.Default.List,
+                        onClick = {
+                            val path = saveFileDialog("payments_full.xlsx")
+                            if (path != null) viewModel.exportPaymentLog(path)
+                        }
+                    )
+                }
             }
 
             Spacer(Modifier.height(32.dp))

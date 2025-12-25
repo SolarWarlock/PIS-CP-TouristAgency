@@ -4,7 +4,6 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 
 
-// Модель сотрудника (текущего пользователя)
 data class Employee(
     val id: Int,
     val fio: String,
@@ -12,7 +11,6 @@ data class Employee(
     val dbLogin: String
 )
 
-// Модель клиента (текущего пользователя)
 data class Client(
     val id: Int,
     val firstName: String,
@@ -56,7 +54,6 @@ data class Tour(
     val rating: Double?
 )
 
-// 2. Новый класс для списка отзывов
 data class ReviewItem(
     val id: Int,
     val tourName: String,
@@ -68,7 +65,7 @@ data class ReviewItem(
 
 data class Booking(
     val id: Int,
-    val tourId: Int,          // <--- НОВОЕ ПОЛЕ
+    val tourId: Int,
     val tourName: String,
     val clientName: String?,
     val date: String,
@@ -77,4 +74,21 @@ data class Booking(
     val price: Double,
     val paidAmount: Double,
     val hasReview: Boolean = false //
+)
+
+data class DebtorReportItem(
+    val client: String,
+    val tour: String,
+    val date: String,
+    val total: Double,
+    val paid: Double,
+    val debt: Double
+)
+
+data class PaymentLogItem(
+    val id: Int,
+    val date: String,
+    val client: String,
+    val amount: Double,
+    val method: String
 )

@@ -20,6 +20,7 @@ dependencies {
     // Compose (определяет ОС автоматически)
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
+    implementation(compose.materialIconsExtended)
 
     // === 1. БАЗА ДАННЫХ (PostgreSQL + Exposed) ===
     implementation("org.postgresql:postgresql:42.7.2") // Драйвер

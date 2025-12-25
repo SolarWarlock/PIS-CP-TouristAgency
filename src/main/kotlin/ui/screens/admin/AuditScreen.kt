@@ -1,11 +1,12 @@
 package ui.screens.admin
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -20,6 +21,10 @@ import androidx.compose.ui.unit.sp
 import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.koin.getScreenModel
 import data.model.AuditLogEntry
+import ui.common.BrandBlue
+import java.awt.FileDialog
+import java.io.File
+import javax.swing.JFrame
 
 object AuditScreen : Screen {
     @Composable
@@ -27,7 +32,6 @@ object AuditScreen : Screen {
         val viewModel = getScreenModel<AdminScreenModel>()
         val state by viewModel.state.collectAsState()
 
-        // Загружаем логи при открытии экрана
         LaunchedEffect(Unit) {
             viewModel.loadLogs()
         }
@@ -40,14 +44,44 @@ object AuditScreen : Screen {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("Журнал безопасности", style = MaterialTheme.typography.headlineMedium)
-                IconButton(onClick = { viewModel.loadLogs() }) {
-                    Icon(Icons.Default.Refresh, "Обновить")
+
+                // Блок кнопок
+                Row {
+                    // БЭКАП БД
+                    IconButton(onClick = {
+                        val path = saveFileDialog("backup_${System.currentTimeMillis()}.sql")
+                        if (path != null) {
+                            viewModel.createBackup(path)
+                        }
+                    }) {
+                        // Иконка "Сохранить" или "Облако"
+                        // Проверь импорт: import androidx.compose.material.icons.filled.Save
+                        Icon(Icons.Default.Save, "Сделать бэкап БД", tint = BrandBlue)
+                    }
+
+
+                    // Кнопка СКАЧАТЬ
+                    IconButton(onClick = {
+                        val path = saveFileDialog("audit_logs.xlsx")
+                        if (path != null) {
+                            viewModel.exportLogs(path)
+                        }
+                    }) {
+                        Icon(Icons.Default.Share, "Скачать логи")
+                    }
+
+                    Spacer(Modifier.width(8.dp))
+
+                    // Кнопка ОБНОВИТЬ
+                    IconButton(onClick = { viewModel.loadLogs() }) {
+                        Icon(Icons.Default.Refresh, "Обновить")
+                    }
                 }
             }
 
             Spacer(Modifier.height(16.dp))
 
-            // Контент
+            // Контент (Таблица)
             when (val s = state) {
                 is AdminState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
@@ -58,15 +92,14 @@ object AuditScreen : Screen {
                         Text("Журнал пуст", color = Color.Gray)
                     } else {
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            // Заголовок таблицы
                             item {
                                 Row(Modifier.padding(horizontal = 8.dp)) {
-                                    Text("Время", modifier = Modifier.width(120.dp), fontWeight = FontWeight.Bold)
-                                    Text("Пользователь", modifier = Modifier.width(150.dp), fontWeight = FontWeight.Bold)
+                                    Text("Время", modifier = Modifier.width(150.dp), fontWeight = FontWeight.Bold)
+                                    Text("Пользователь", modifier = Modifier.width(120.dp), fontWeight = FontWeight.Bold)
                                     Text("Действие", modifier = Modifier.width(100.dp), fontWeight = FontWeight.Bold)
                                     Text("Детали", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
                                 }
-                                Divider(Modifier.padding(vertical = 8.dp))
+                                HorizontalDivider(Modifier.padding(vertical = 8.dp))
                             }
 
                             items(s.list) { log ->
@@ -75,12 +108,23 @@ object AuditScreen : Screen {
                         }
                     }
                 }
-                else -> {} // Игнорируем состояние EmployeesContent
+                else -> {}
             }
         }
     }
-}
 
+    // Хелпер для диалога сохранения
+    private fun saveFileDialog(defaultName: String): String? {
+        val dialog = FileDialog(null as JFrame?, "Сохранить логи", FileDialog.SAVE)
+        dialog.file = defaultName
+        dialog.isVisible = true
+        return if (dialog.directory != null && dialog.file != null) {
+            dialog.directory + dialog.file
+        } else {
+            null
+        }
+    }
+}
 @Composable
 fun LogItem(log: AuditLogEntry) {
     val operationColor = when (log.operation) {
