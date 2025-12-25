@@ -52,10 +52,17 @@ class BookingsScreenModel(
     fun changeStatus(bookingId: Int, newStatus: String) {
         screenModelScope.launch {
             try {
-                repository.updateStatus(bookingId, newStatus)
-                loadData() // Обновляем список
+                // Берем ID текущего менеджера из сессии
+                val currentManagerId = UserSession.currentEmployee?.id
+                    ?: throw Exception("Ошибка сессии")
+
+                // Вызываем обновленный метод репозитория
+                repository.updateStatus(bookingId, newStatus, currentManagerId)
+
+                loadData()
             } catch (e: Exception) {
-                println("Ошибка обновления: ${e.message}")
+                // ... обработка ошибок ...
+                println(e)
             }
         }
     }
@@ -93,10 +100,15 @@ class BookingsScreenModel(
         screenModelScope.launch {
             try {
                 val clientId = UserSession.currentClient?.id ?: throw Exception("Нет авторизации")
+
+                // 1. Отправляем отзыв в базу
                 reviewRepository.addReview(tourId, clientId, rating, comment)
-                // Можно показать уведомление об успехе
+
+                // 2. ВАЖНО: Перезагружаем список, чтобы обновить флаги hasReview
+                loadData()
+
             } catch (e: Exception) {
-                _state.value = BookingsListState.Error("Ошибка (возможно, вы уже оценили этот тур): ${e.message}")
+                _state.value = BookingsListState.Error("Ошибка: ${e.message}")
             }
         }
     }

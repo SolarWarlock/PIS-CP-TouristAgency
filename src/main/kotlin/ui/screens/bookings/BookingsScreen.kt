@@ -7,6 +7,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,21 +29,25 @@ object BookingsScreen : Screen {
         val viewModel = getScreenModel<BookingsScreenModel>()
         val state by viewModel.state.collectAsState()
 
-        // Состояние для диалога оплаты
+        // Состояние для диалога оплаты (Клиент)
         var bookingToPay by remember { mutableStateOf<Booking?>(null) }
 
-        // Состояние для диалога отзыва (НОВОЕ)
+        // Состояние для диалога отзыва (Клиент)
         var bookingToReview by remember { mutableStateOf<Booking?>(null) }
 
+        // Состояние вкладок (Менеджер)
+        var selectedTabIndex by remember { mutableStateOf(0) }
+        val managerTabs = listOf("Новые (Входящие)", "Архив / В работе")
+
         Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-            // Заголовок
+            // Заголовок и кнопка обновления
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    if (UserSession.isManager) "Входящие заявки" else "Мои поездки",
+                    if (UserSession.isManager) "Управление заказами" else "Мои поездки",
                     style = MaterialTheme.typography.headlineMedium
                 )
                 IconButton(onClick = { viewModel.loadData() }) {
@@ -52,22 +57,68 @@ object BookingsScreen : Screen {
 
             Spacer(Modifier.height(16.dp))
 
-            when (val s = state) {
-                is BookingsListState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+            // Вкладки для Менеджера
+            if (UserSession.isManager) {
+                TabRow(
+                    selectedTabIndex = selectedTabIndex,
+                    containerColor = Color.Transparent,
+                    contentColor = BrandBlue,
+                    indicator = { tabPositions ->
+                        TabRowDefaults.SecondaryIndicator(
+                            Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
+                            color = BrandBlue
+                        )
+                    }
+                ) {
+                    managerTabs.forEachIndexed { index, title ->
+                        Tab(
+                            selected = selectedTabIndex == index,
+                            onClick = { selectedTabIndex = index },
+                            text = { Text(title, fontWeight = if (selectedTabIndex == index) FontWeight.Bold else FontWeight.Normal) }
+                        )
+                    }
                 }
-                is BookingsListState.Error -> Text(s.message, color = Color.Red)
+                Spacer(Modifier.height(16.dp))
+            }
+
+            // Список
+            when (val s = state) {
+                is BookingsListState.Loading -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                }
+                is BookingsListState.Error -> {
+                    Text(s.message, color = Color.Red)
+                }
                 is BookingsListState.Content -> {
-                    if (s.bookings.isEmpty()) {
-                        Text("Список пуст", color = Color.Gray)
+                    // Фильтрация списка в зависимости от роли и вкладки
+                    val filteredList = remember(s.bookings, selectedTabIndex, UserSession.isManager) {
+                        if (UserSession.isManager) {
+                            if (selectedTabIndex == 0) {
+                                // Вкладка "Новые": только те, что "В обработке" (требуют действия)
+                                s.bookings.filter { it.status == "В обработке" }
+                            } else {
+                                // Вкладка "Архив": все остальные (Подтверждено, Оплачено, Аннулировано)
+                                s.bookings.filter { it.status != "В обработке" }
+                            }
+                        } else {
+                            // Клиент видит всё
+                            s.bookings
+                        }
+                    }
+
+                    if (filteredList.isEmpty()) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("Список пуст", color = Color.Gray)
+                        }
                     } else {
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(s.bookings) { booking ->
+                            items(filteredList) { booking ->
                                 BookingItem(
                                     booking = booking,
                                     viewModel = viewModel,
                                     onPayClick = { bookingToPay = it },
-                                    // НОВОЕ: Передаем обработчик клика на отзыв
                                     onReviewClick = { bookingToReview = it }
                                 )
                             }
@@ -77,28 +128,32 @@ object BookingsScreen : Screen {
             }
         }
 
-        // Диалог оплаты
+        // --- ДИАЛОГИ ---
+
+        // 1. Диалог оплаты (через костыль с Debtor, чтобы переиспользовать PaymentDialog)
         if (bookingToPay != null) {
+            val debt = bookingToPay!!.price - bookingToPay!!.paidAmount
             val fakeDebtor = Debtor(
                 bookingId = bookingToPay!!.id,
                 clientName = "Я",
                 tourName = bookingToPay!!.tourName,
                 totalPrice = bookingToPay!!.price,
                 paidAmount = bookingToPay!!.paidAmount,
-                debt = bookingToPay!!.price - bookingToPay!!.paidAmount
+                debt = debt
             )
 
             PaymentDialog(
                 debtor = fakeDebtor,
                 onDismiss = { bookingToPay = null },
                 onConfirm = { amount, _ ->
+                    // Метод оплаты всегда "Карта" для онлайн-оплаты
                     viewModel.payBooking(bookingToPay!!.id, amount)
                     bookingToPay = null
                 }
             )
         }
 
-        // Диалог отзыва (НОВОЕ)
+        // 2. Диалог отзыва
         if (bookingToReview != null) {
             ReviewDialog(
                 tourName = bookingToReview!!.tourName,
@@ -124,26 +179,31 @@ fun BookingItem(
         colors = CardDefaults.cardColors(containerColor = Color.White)
     ) {
         Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
+            // Верхняя строка: ID и Дата
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Text("Заказ #${booking.id}", fontWeight = FontWeight.Bold, color = Color.Gray)
                 Text(booking.date, style = MaterialTheme.typography.bodySmall)
             }
 
             Spacer(Modifier.height(4.dp))
+
+            // Название тура
             Text(booking.tourName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
+            // Имя клиента (видит только менеджер)
             if (booking.clientName != null) {
-                Text("Клиент: ${booking.clientName}", color = BrandBlue)
+                Text("Клиент: ${booking.clientName}", color = BrandBlue, style = MaterialTheme.typography.bodyMedium)
             }
 
             Spacer(Modifier.height(8.dp))
 
+            // Статусы
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 StatusBadge(booking.status)
                 StatusBadge(booking.paymentStatus)
             }
 
-            // ОТОБРАЖЕНИЕ ЦЕНЫ И ДОЛГА
+            // Цена и Долг
             Column(
                 modifier = Modifier.align(Alignment.End).padding(top = 8.dp),
                 horizontalAlignment = Alignment.End
@@ -186,6 +246,7 @@ fun BookingItem(
 
             // 1. ДЛЯ МЕНЕДЖЕРА
             if (UserSession.isManager) {
+                // Если новая заявка -> Подтвердить / Отклонить
                 if (booking.status == "В обработке") {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
@@ -204,6 +265,8 @@ fun BookingItem(
                         }
                     }
                 }
+
+                // Если отменена -> Удалить
                 if (booking.status == "Аннулировано") {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
@@ -219,34 +282,38 @@ fun BookingItem(
                 }
             }
 
-            // 2. ДЛЯ КЛИЕНТА (Оплата)
-            // Появляется ТОЛЬКО если менеджер подтвердил ("Подтверждено") и еще не все оплачено
-            if (!UserSession.isManager &&
-                booking.status == "Подтверждено" &&
-                booking.paymentStatus != "Оплачено"
-            ) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                Button(
-                    onClick = { onPayClick(booking) },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = BrandBlue)
-                ) {
-                    Text("Оплатить онлайн")
-                }
-            }
+            // 2. ДЛЯ КЛИЕНТА
+            if (!UserSession.isManager) {
 
-            // 3. ДЛЯ КЛИЕНТА (Отзыв)
-            // Появляется, если оплачено И отзыва еще нет
-            if (!UserSession.isManager &&
-                booking.paymentStatus == "Оплачено" &&
-                !booking.hasReview
-            ) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                OutlinedButton(
-                    onClick = { onReviewClick(booking) },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Оценить поездку")
+                // Кнопка ОПЛАТЫ (показываем, если подтверждено и есть долг)
+                if (booking.status == "Подтверждено" && booking.paymentStatus != "Оплачено") {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Button(
+                        onClick = { onPayClick(booking) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = BrandBlue)
+                    ) {
+                        Text("Оплатить онлайн")
+                    }
+                }
+
+                // Кнопка ОТЗЫВА (показываем, если оплачено и отзыва нет)
+                if (booking.paymentStatus == "Оплачено" && !booking.hasReview) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    OutlinedButton(
+                        onClick = { onReviewClick(booking) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Оценить поездку")
+                    }
+                } else if (booking.hasReview) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Text(
+                        text = "✓ Отзыв оставлен",
+                        color = Color.Gray,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    )
                 }
             }
         }
@@ -254,7 +321,7 @@ fun BookingItem(
 }
 
 @Composable
-fun StatusBadge(text: String) { // Убрали неиспользуемый параметр isPayment
+fun StatusBadge(text: String) {
     val color = when (text) {
         "Подтверждено", "Оплачено" -> Color(0xFF2E7D32) // Зеленый
         "В обработке", "Частично" -> Color(0xFFF9A825) // Желтый

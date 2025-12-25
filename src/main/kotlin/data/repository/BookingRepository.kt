@@ -23,20 +23,23 @@ class BookingRepository {
         return@dbQuery newBookingId
     }
 
-    // 1. Для МЕНЕДЖЕРА (Исправленный полный SQL)
+    // 1. Для МЕНЕДЖЕРА (ИСПРАВЛЕНО)
     suspend fun getBookingsForManager(managerId: Int): List<Booking> = dbQuery {
         val bookings = mutableListOf<Booking>()
 
-        // ВАЖНО: Здесь должны быть все JOIN
+        // ИЗМЕНЕНИЕ: Добавлено условие (b.ManagerID IS NULL)
+        // Теперь менеджер видит свои заявки ИЛИ новые (ничейные)
         val sql = """
-            SELECT b.BookingID, t.TourID, t.Destination, c.FirstName, c.LastName, b.BookingDate, b.Status, b.PaymentStatus, b.FinalPrice,
+            SELECT b.BookingID, t.TourID, t.Destination, c.FirstName, c.LastName, b.BookingDate, b.Status, b.PaymentStatus, b.FinalPrice, b.ManagerID,
                    (SELECT COALESCE(SUM(Amount), 0) FROM Payments p WHERE p.BookingID = b.BookingID) as PaidAmount,
                    EXISTS(SELECT 1 FROM Reviews r WHERE r.ClientID = b.ClientID AND r.TourID = b.TourID) as HasReview
             FROM Bookings b
             JOIN Clients c ON b.ClientID = c.ClientID
             JOIN Tours t ON b.TourID = t.TourID
-            WHERE b.ManagerID = $managerId
-            ORDER BY b.BookingDate DESC
+            WHERE (b.ManagerID = $managerId OR b.ManagerID IS NULL) 
+            ORDER BY 
+                CASE WHEN b.Status = 'В обработке' THEN 0 ELSE 1 END, -- Сначала новые
+                b.BookingDate DESC
         """.trimIndent()
 
         val conn = (TransactionManager.current().connection as JdbcConnectionImpl).connection
@@ -50,13 +53,12 @@ class BookingRepository {
         return@dbQuery bookings
     }
 
-    // 2. Для КЛИЕНТА (Исправленный полный SQL)
+    // 2. Для КЛИЕНТА (Без изменений)
     suspend fun getBookingsForClient(clientId: Int): List<Booking> = dbQuery {
         val bookings = mutableListOf<Booking>()
 
-        // ВАЖНО: Здесь тоже нужен JOIN Tours t
         val sql = """
-            SELECT b.BookingID, t.TourID, t.Destination, b.BookingDate, b.Status, b.PaymentStatus, b.FinalPrice,
+            SELECT b.BookingID, t.TourID, t.Destination, b.BookingDate, b.Status, b.PaymentStatus, b.FinalPrice, b.ManagerID,
                    (SELECT COALESCE(SUM(Amount), 0) FROM Payments p WHERE p.BookingID = b.BookingID) as PaidAmount,
                    EXISTS(SELECT 1 FROM Reviews r WHERE r.ClientID = b.ClientID AND r.TourID = b.TourID) as HasReview
             FROM Bookings b
@@ -82,6 +84,9 @@ class BookingRepository {
 
         val clientName = if (hasClientName) "${rs.getString("FirstName")} ${rs.getString("LastName")}" else null
 
+        // Определяем, назначена ли заявка (если ManagerID == 0 или NULL в базе)
+        val mgrId = rs.getInt("ManagerID") // Возвращает 0 если null
+
         return Booking(
             id = rs.getInt("BookingID"),
             tourId = rs.getInt("TourID"),
@@ -92,16 +97,20 @@ class BookingRepository {
             paymentStatus = rs.getString("PaymentStatus"),
             price = rs.getBigDecimal("FinalPrice").toDouble(),
             paidAmount = rs.getBigDecimal("PaidAmount").toDouble(),
-            hasReview = rs.getBoolean("HasReview")
+            hasReview = rs.getBoolean("HasReview"),
+            // Добавим временное поле в модель? Или будем определять по ManagerID?
+            // Пока просто вернем объект, логику фильтрации сделаем в UI
         )
     }
 
-    suspend fun updateStatus(bookingId: Int, newStatus: String) = dbQuery {
-        val sql = "UPDATE Bookings SET Status = ? WHERE BookingID = ?"
+    // 3. Обновление статуса И ПРИВЯЗКА МЕНЕДЖЕРА
+    suspend fun updateStatus(bookingId: Int, newStatus: String, managerId: Int) = dbQuery {
+        val sql = "UPDATE Bookings SET Status = ?, ManagerID = ? WHERE BookingID = ?"
         val conn = (TransactionManager.current().connection as JdbcConnectionImpl).connection
         val stmt = conn.prepareStatement(sql)
         stmt.setString(1, newStatus)
-        stmt.setInt(2, bookingId)
+        stmt.setInt(2, managerId) // Присваиваем заявку текущему менеджеру
+        stmt.setInt(3, bookingId)
         stmt.executeUpdate()
     }
 
