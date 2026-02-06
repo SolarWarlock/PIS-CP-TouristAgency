@@ -1,0 +1,1908 @@
+--
+-- PostgreSQL database dump
+--
+
+\restrict lAEiWAUfdgcIeN6zPqTHlUhnOaY7qJiu7iGaWQcETpy0zNjP4Vp6SmJLtAhQCVi
+
+-- Dumped from database version 18.1
+-- Dumped by pg_dump version 18.1
+
+-- Started on 2026-02-06 22:02:38
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+--
+-- TOC entry 262 (class 1255 OID 16611)
+-- Name: add_payment(integer, numeric, character varying, character varying); Type: PROCEDURE; Schema: public; Owner: postgres
+--
+
+CREATE PROCEDURE public.add_payment(IN p_booking_id integer, IN p_amount numeric, IN p_method character varying, IN p_transaction_info character varying)
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+    v_total_paid DECIMAL(10,2);
+    v_final_price DECIMAL(10,2);
+BEGIN
+    -- Вставка платежа
+    INSERT INTO Payments (BookingID, Amount, PaymentMethod, TransactionInfo, PaymentDate)
+    VALUES (p_booking_id, p_amount, p_method, p_transaction_info, CURRENT_TIMESTAMP);
+
+    -- Пересчет сумм
+    SELECT COALESCE(SUM(Amount), 0) INTO v_total_paid
+    FROM Payments
+    WHERE BookingID = p_booking_id;
+
+    SELECT FinalPrice INTO v_final_price
+    FROM Bookings
+    WHERE BookingID = p_booking_id;
+
+    -- Обновление статуса
+    IF v_total_paid >= v_final_price THEN
+        UPDATE Bookings SET PaymentStatus = 'Оплачено' WHERE BookingID = p_booking_id;
+    ELSIF v_total_paid > 0 THEN
+        UPDATE Bookings SET PaymentStatus = 'Частично' WHERE BookingID = p_booking_id;
+    ELSE
+        UPDATE Bookings SET PaymentStatus = 'Не оплачено' WHERE BookingID = p_booking_id;
+    END IF;
+END;
+$$;
+
+
+ALTER PROCEDURE public.add_payment(IN p_booking_id integer, IN p_amount numeric, IN p_method character varying, IN p_transaction_info character varying) OWNER TO postgres;
+
+--
+-- TOC entry 255 (class 1255 OID 16608)
+-- Name: check_credentials(character varying, character varying); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.check_credentials(p_email character varying, p_password_hash character varying) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_client_id INT;
+BEGIN
+    -- Поиск клиента с совпадением и Email, и Хеша пароля
+    SELECT ClientID INTO v_client_id
+    FROM Clients
+    WHERE Email = p_email AND PasswordHash = p_password_hash;
+
+    -- Если клиент найден, возвращаем его ID
+    IF v_client_id IS NOT NULL THEN
+        RETURN v_client_id;
+    ELSE
+        -- Возвращаем -1 как код ошибки "Неверный логин или пароль"
+        RETURN -1;
+    END IF;
+END;
+$$;
+
+
+ALTER FUNCTION public.check_credentials(p_email character varying, p_password_hash character varying) OWNER TO postgres;
+
+--
+-- TOC entry 256 (class 1255 OID 16610)
+-- Name: create_booking(integer, integer, integer); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.create_booking(p_tour_id integer, p_client_id integer, p_manager_id integer) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    new_booking_id INT;
+    v_tour_cost DECIMAL(10,2);
+    v_is_active BOOLEAN;
+BEGIN
+    -- 1. Проверка актуальности тура и получение цены
+    SELECT BaseCost, IsActive INTO v_tour_cost, v_is_active
+    FROM Tours 
+    WHERE TourID = p_tour_id;
+    
+    -- Обработка ошибок валидации
+    IF v_tour_cost IS NULL THEN
+        RAISE EXCEPTION 'Тур с ID % не найден', p_tour_id;
+    END IF;
+
+    IF v_is_active = FALSE THEN
+        RAISE EXCEPTION 'Тур с ID % находится в архиве и недоступен для бронирования', p_tour_id;
+    END IF;
+
+    -- 2. Создание брони с фиксацией цены (Snapshot Price)
+    -- Мы записываем v_tour_cost в поле FinalPrice, чтобы история продаж не менялась
+    -- при изменении цены в каталоге
+    INSERT INTO Bookings (
+        TourID, ClientID, ManagerID, 
+        BookingDate, Status, PaymentStatus, FinalPrice
+    )
+    VALUES (
+        p_tour_id, p_client_id, p_manager_id, 
+        CURRENT_TIMESTAMP, 'В обработке', 'Не оплачено', v_tour_cost
+    )
+    RETURNING BookingID INTO new_booking_id;
+
+    RETURN new_booking_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.create_booking(p_tour_id integer, p_client_id integer, p_manager_id integer) OWNER TO postgres;
+
+--
+-- TOC entry 254 (class 1255 OID 16609)
+-- Name: create_tour(integer, integer, integer, character varying, date, date, numeric, text); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.create_tour(p_tour_type_id integer, p_manager_id integer, p_partner_id integer, p_destination character varying, p_start_date date, p_end_date date, p_base_cost numeric, p_description text) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+    new_tour_id INT;
+BEGIN
+    INSERT INTO Tours (
+        TourTypeID, ManagerID, PartnerID, Destination, 
+        StartDate, EndDate, BaseCost, Description, IsActive
+    )
+    VALUES (
+        p_tour_type_id, p_manager_id, p_partner_id, p_destination, 
+        p_start_date, p_end_date, p_base_cost, p_description, TRUE
+    )
+    RETURNING TourID INTO new_tour_id;
+    
+    RETURN new_tour_id;
+END;
+$$;
+
+
+ALTER FUNCTION public.create_tour(p_tour_type_id integer, p_manager_id integer, p_partner_id integer, p_destination character varying, p_start_date date, p_end_date date, p_base_cost numeric, p_description text) OWNER TO postgres;
+
+--
+-- TOC entry 257 (class 1255 OID 24576)
+-- Name: get_my_tours(integer); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.get_my_tours(p_client_id integer) RETURNS TABLE(bookingid integer, bookingdate date, destination character varying, dates text, cost numeric, status character varying, paymentstatus character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        b.BookingID,
+        b.BookingDate::DATE,
+        t.Destination,
+        -- Форматирование дат в строку
+        (TO_CHAR(t.StartDate, 'DD.MM.YYYY') || ' - ' || TO_CHAR(t.EndDate, 'DD.MM.YYYY')) AS Dates,
+        b.FinalPrice,
+        b.Status,
+        b.PaymentStatus
+    FROM Bookings b
+    JOIN Tours t ON b.TourID = t.TourID
+    WHERE b.ClientID = p_client_id
+    ORDER BY b.BookingDate DESC;
+END;
+$$;
+
+
+ALTER FUNCTION public.get_my_tours(p_client_id integer) OWNER TO postgres;
+
+--
+-- TOC entry 253 (class 1255 OID 16607)
+-- Name: register_client(character varying, character varying, character varying, character varying, character varying, character varying); Type: PROCEDURE; Schema: public; Owner: postgres
+--
+
+CREATE PROCEDURE public.register_client(IN p_firstname character varying, IN p_lastname character varying, IN p_phone character varying, IN p_email character varying, IN p_password_hash character varying, IN p_passport_data character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- 1. Валидация: Проверка на существование пользователя с таким Email
+    IF EXISTS (SELECT 1 FROM Clients WHERE Email = p_email) THEN
+        RAISE EXCEPTION 'Пользователь с адресом % уже зарегистрирован', p_email;
+    END IF;
+
+    -- 2. Создание записи
+    INSERT INTO Clients (
+        FirstName, LastName, Phone, Email, PasswordHash, PassportData, RegistrationDate
+    )
+    VALUES (
+        p_firstname, p_lastname, p_phone, p_email, p_password_hash, p_passport_data, CURRENT_TIMESTAMP
+    );
+    
+    -- Логирование сработает автоматически благодаря триггеру
+END;
+$$;
+
+
+ALTER PROCEDURE public.register_client(IN p_firstname character varying, IN p_lastname character varying, IN p_phone character varying, IN p_email character varying, IN p_password_hash character varying, IN p_passport_data character varying) OWNER TO postgres;
+
+--
+-- TOC entry 260 (class 1255 OID 32768)
+-- Name: report_debtors(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.report_debtors() RETURNS TABLE(clientname text, tourname character varying, bookingdate date, totalcost numeric, paidamount numeric, debt numeric)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        (c.FirstName || ' ' || c.LastName) AS ClientName,
+        t.Destination,
+        b.BookingDate::DATE,
+        b.FinalPrice,
+        (SELECT COALESCE(SUM(Amount), 0) FROM Payments p WHERE p.BookingID = b.BookingID) AS PaidAmount,
+        (b.FinalPrice - (SELECT COALESCE(SUM(Amount), 0) FROM Payments p WHERE p.BookingID = b.BookingID)) AS Debt
+    FROM Bookings b 
+    JOIN Clients c ON b.ClientID = c.ClientID 
+    JOIN Tours t ON b.TourID = t.TourID 
+    WHERE b.PaymentStatus IN ('Не оплачено', 'Частично') 
+      AND b.Status != 'Аннулировано'
+    ORDER BY Debt DESC; -- Сначала самые большие долги
+END;
+$$;
+
+
+ALTER FUNCTION public.report_debtors() OWNER TO postgres;
+
+--
+-- TOC entry 258 (class 1255 OID 24583)
+-- Name: report_manager_performance(date, date); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.report_manager_performance(p_start_date date, p_end_date date) RETURNS TABLE(managername text, managerpos character varying, tourssold integer, totalrevenue numeric)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        (m.FirstName || ' ' || m.LastName) AS ManagerName,
+        m.Position,          -- Из таблицы берем поле Position (тут можно, это колонка)
+        COUNT(b.BookingID)::INT AS ToursSold,
+        COALESCE(SUM(b.FinalPrice), 0) AS TotalRevenue
+    FROM Managers m
+    LEFT JOIN Bookings b ON m.ManagerID = b.ManagerID
+    WHERE (b.BookingDate BETWEEN p_start_date AND p_end_date OR b.BookingDate IS NULL)
+      AND (b.Status != 'Аннулировано' OR b.Status IS NULL)
+    GROUP BY m.ManagerID, m.FirstName, m.LastName, m.Position
+    ORDER BY TotalRevenue DESC;
+END;
+$$;
+
+
+ALTER FUNCTION public.report_manager_performance(p_start_date date, p_end_date date) OWNER TO postgres;
+
+--
+-- TOC entry 259 (class 1255 OID 32769)
+-- Name: report_payments_by_period(date, date); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.report_payments_by_period(p_start_date date, p_end_date date) RETURNS TABLE(paymentid integer, bookingid integer, clientname text, paymentdate timestamp without time zone, amount numeric, paymentmethod character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        p.PaymentID,
+        p.BookingID,
+        (c.FirstName || ' ' || c.LastName) AS ClientName,
+        p.PaymentDate,
+        p.Amount,
+        p.PaymentMethod    -- <--- И В ВЫБОРКУ ТОЖЕ
+    FROM Payments p
+    JOIN Bookings b ON p.BookingID = b.BookingID
+    JOIN Clients c ON b.ClientID = c.ClientID
+    WHERE p.PaymentDate BETWEEN p_start_date AND p_end_date
+    ORDER BY p.PaymentDate DESC;
+END;
+$$;
+
+
+ALTER FUNCTION public.report_payments_by_period(p_start_date date, p_end_date date) OWNER TO postgres;
+
+--
+-- TOC entry 261 (class 1255 OID 16628)
+-- Name: system_audit_trigger(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.system_audit_trigger() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+    v_record_id TEXT;
+    v_old_data JSONB := NULL;
+    v_new_data JSONB := NULL;
+    v_changed_fields TEXT := '';
+BEGIN
+    -- Определение типа операции и данных
+    IF (TG_OP = 'DELETE') THEN
+        v_old_data := to_jsonb(OLD);
+        v_record_id := COALESCE(v_old_data->>'bookingid', v_old_data->>'clientid', v_old_data->>'paymentid', 'N/A');
+    ELSIF (TG_OP = 'INSERT') THEN
+        v_new_data := to_jsonb(NEW);
+        v_record_id := COALESCE(v_new_data->>'bookingid', v_new_data->>'clientid', v_new_data->>'paymentid', 'N/A');
+    ELSE -- UPDATE
+        v_old_data := to_jsonb(OLD);
+        v_new_data := to_jsonb(NEW);
+        v_record_id := COALESCE(v_new_data->>'bookingid', 'N/A');
+        
+        SELECT string_agg(key, ', ') INTO v_changed_fields
+        FROM jsonb_each_text(v_old_data) AS o(key, value)
+        JOIN jsonb_each_text(v_new_data) AS n(key, value) USING (key)
+        WHERE o.value IS DISTINCT FROM n.value;
+    END IF;
+
+    -- Запись события в журнал
+    INSERT INTO AuditLog (
+        DBUser, OperationType, TableName, RecordID, 
+        OldData, NewData, ChangedFields
+    )
+    VALUES (
+        session_user,   -- Сохраняем имя реального пользователя, который запустил процесс
+        TG_OP,          
+        TG_TABLE_NAME,  
+        v_record_id,
+        v_old_data,
+        v_new_data,
+        NULLIF(v_changed_fields, '')
+    );
+
+    IF (TG_OP = 'DELETE') THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END;
+$$;
+
+
+ALTER FUNCTION public.system_audit_trigger() OWNER TO postgres;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- TOC entry 232 (class 1259 OID 16492)
+-- Name: accommodations; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.accommodations (
+    accommodationid integer NOT NULL,
+    tourid integer NOT NULL,
+    type character varying(100) NOT NULL,
+    description text,
+    cost numeric(10,2) NOT NULL
+);
+
+
+ALTER TABLE public.accommodations OWNER TO postgres;
+
+--
+-- TOC entry 231 (class 1259 OID 16491)
+-- Name: accommodations_accommodationid_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.accommodations_accommodationid_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.accommodations_accommodationid_seq OWNER TO postgres;
+
+--
+-- TOC entry 5068 (class 0 OID 0)
+-- Dependencies: 231
+-- Name: accommodations_accommodationid_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.accommodations_accommodationid_seq OWNED BY public.accommodations.accommodationid;
+
+
+--
+-- TOC entry 240 (class 1259 OID 16636)
+-- Name: auditlog; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.auditlog (
+    logid bigint NOT NULL,
+    eventdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    dbuser character varying(50) NOT NULL,
+    operationtype character varying(10) NOT NULL,
+    tablename character varying(50) NOT NULL,
+    recordid text,
+    olddata jsonb,
+    newdata jsonb,
+    changedfields text
+);
+
+
+ALTER TABLE public.auditlog OWNER TO postgres;
+
+--
+-- TOC entry 5070 (class 0 OID 0)
+-- Dependencies: 240
+-- Name: TABLE auditlog; Type: COMMENT; Schema: public; Owner: postgres
+--
+
+COMMENT ON TABLE public.auditlog IS 'Журнал изменений критически важных данных';
+
+
+--
+-- TOC entry 239 (class 1259 OID 16635)
+-- Name: auditlog_logid_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.auditlog_logid_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.auditlog_logid_seq OWNER TO postgres;
+
+--
+-- TOC entry 5072 (class 0 OID 0)
+-- Dependencies: 239
+-- Name: auditlog_logid_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.auditlog_logid_seq OWNED BY public.auditlog.logid;
+
+
+--
+-- TOC entry 234 (class 1259 OID 16510)
+-- Name: bookings; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.bookings (
+    bookingid integer NOT NULL,
+    tourid integer NOT NULL,
+    clientid integer NOT NULL,
+    managerid integer,
+    bookingdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    status character varying(20) NOT NULL,
+    paymentstatus character varying(20) DEFAULT 'Не оплачено'::character varying,
+    finalprice numeric(10,2) NOT NULL,
+    CONSTRAINT bookings_paymentstatus_check CHECK (((paymentstatus)::text = ANY ((ARRAY['Не оплачено'::character varying, 'Частично'::character varying, 'Оплачено'::character varying])::text[]))),
+    CONSTRAINT bookings_status_check CHECK (((status)::text = ANY ((ARRAY['В обработке'::character varying, 'Подтверждено'::character varying, 'Аннулировано'::character varying, 'Завершено'::character varying])::text[])))
+);
+
+
+ALTER TABLE public.bookings OWNER TO postgres;
+
+--
+-- TOC entry 233 (class 1259 OID 16509)
+-- Name: bookings_bookingid_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.bookings_bookingid_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.bookings_bookingid_seq OWNER TO postgres;
+
+--
+-- TOC entry 5075 (class 0 OID 0)
+-- Dependencies: 233
+-- Name: bookings_bookingid_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.bookings_bookingid_seq OWNED BY public.bookings.bookingid;
+
+
+--
+-- TOC entry 220 (class 1259 OID 16390)
+-- Name: clients; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.clients (
+    clientid integer NOT NULL,
+    firstname character varying(50) NOT NULL,
+    lastname character varying(50) NOT NULL,
+    phone character varying(20),
+    email character varying(100) NOT NULL,
+    passwordhash character varying(255) NOT NULL,
+    passportdata character varying(100),
+    registrationdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+ALTER TABLE public.clients OWNER TO postgres;
+
+--
+-- TOC entry 219 (class 1259 OID 16389)
+-- Name: clients_clientid_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.clients_clientid_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.clients_clientid_seq OWNER TO postgres;
+
+--
+-- TOC entry 5078 (class 0 OID 0)
+-- Dependencies: 219
+-- Name: clients_clientid_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.clients_clientid_seq OWNED BY public.clients.clientid;
+
+
+--
+-- TOC entry 226 (class 1259 OID 16430)
+-- Name: managercontracts; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.managercontracts (
+    contractid integer NOT NULL,
+    managerid integer NOT NULL,
+    startdate date NOT NULL,
+    enddate date,
+    commissionrate numeric(5,2) NOT NULL
+);
+
+
+ALTER TABLE public.managercontracts OWNER TO postgres;
+
+--
+-- TOC entry 225 (class 1259 OID 16429)
+-- Name: managercontracts_contractid_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.managercontracts_contractid_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.managercontracts_contractid_seq OWNER TO postgres;
+
+--
+-- TOC entry 5081 (class 0 OID 0)
+-- Dependencies: 225
+-- Name: managercontracts_contractid_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.managercontracts_contractid_seq OWNED BY public.managercontracts.contractid;
+
+
+--
+-- TOC entry 224 (class 1259 OID 16418)
+-- Name: managers; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.managers (
+    managerid integer NOT NULL,
+    firstname character varying(50) NOT NULL,
+    lastname character varying(50) NOT NULL,
+    phone character varying(20),
+    email character varying(100),
+    "position" character varying(50) NOT NULL,
+    hiredate date NOT NULL,
+    db_login character varying(50)
+);
+
+
+ALTER TABLE public.managers OWNER TO postgres;
+
+--
+-- TOC entry 223 (class 1259 OID 16417)
+-- Name: managers_managerid_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.managers_managerid_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.managers_managerid_seq OWNER TO postgres;
+
+--
+-- TOC entry 5084 (class 0 OID 0)
+-- Dependencies: 223
+-- Name: managers_managerid_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.managers_managerid_seq OWNED BY public.managers.managerid;
+
+
+--
+-- TOC entry 228 (class 1259 OID 16446)
+-- Name: partners; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.partners (
+    partnerid integer NOT NULL,
+    name character varying(100) NOT NULL,
+    partnertype character varying(50) NOT NULL,
+    contacts character varying(200),
+    description text,
+    CONSTRAINT partners_partnertype_check CHECK (((partnertype)::text = ANY ((ARRAY['Туроператор'::character varying, 'Отель'::character varying, 'Авиакомпания'::character varying, 'Страховая'::character varying])::text[])))
+);
+
+
+ALTER TABLE public.partners OWNER TO postgres;
+
+--
+-- TOC entry 227 (class 1259 OID 16445)
+-- Name: partners_partnerid_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.partners_partnerid_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.partners_partnerid_seq OWNER TO postgres;
+
+--
+-- TOC entry 5087 (class 0 OID 0)
+-- Dependencies: 227
+-- Name: partners_partnerid_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.partners_partnerid_seq OWNED BY public.partners.partnerid;
+
+
+--
+-- TOC entry 236 (class 1259 OID 16541)
+-- Name: payments; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.payments (
+    paymentid integer NOT NULL,
+    bookingid integer NOT NULL,
+    paymentdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    amount numeric(10,2) NOT NULL,
+    paymentmethod character varying(50),
+    transactioninfo character varying(255)
+);
+
+
+ALTER TABLE public.payments OWNER TO postgres;
+
+--
+-- TOC entry 235 (class 1259 OID 16540)
+-- Name: payments_paymentid_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.payments_paymentid_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.payments_paymentid_seq OWNER TO postgres;
+
+--
+-- TOC entry 5090 (class 0 OID 0)
+-- Dependencies: 235
+-- Name: payments_paymentid_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.payments_paymentid_seq OWNED BY public.payments.paymentid;
+
+
+--
+-- TOC entry 238 (class 1259 OID 16558)
+-- Name: reviews; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.reviews (
+    reviewid integer NOT NULL,
+    tourid integer NOT NULL,
+    clientid integer NOT NULL,
+    reviewdate timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    description text,
+    rating integer,
+    CONSTRAINT reviews_rating_check CHECK (((rating >= 1) AND (rating <= 5)))
+);
+
+
+ALTER TABLE public.reviews OWNER TO postgres;
+
+--
+-- TOC entry 237 (class 1259 OID 16557)
+-- Name: reviews_reviewid_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.reviews_reviewid_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.reviews_reviewid_seq OWNER TO postgres;
+
+--
+-- TOC entry 5093 (class 0 OID 0)
+-- Dependencies: 237
+-- Name: reviews_reviewid_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.reviews_reviewid_seq OWNED BY public.reviews.reviewid;
+
+
+--
+-- TOC entry 230 (class 1259 OID 16459)
+-- Name: tours; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tours (
+    tourid integer NOT NULL,
+    tourtypeid integer NOT NULL,
+    managerid integer NOT NULL,
+    partnerid integer NOT NULL,
+    destination character varying(100) NOT NULL,
+    startdate date NOT NULL,
+    enddate date NOT NULL,
+    basecost numeric(10,2) NOT NULL,
+    description text,
+    isactive boolean DEFAULT true
+);
+
+
+ALTER TABLE public.tours OWNER TO postgres;
+
+--
+-- TOC entry 229 (class 1259 OID 16458)
+-- Name: tours_tourid_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.tours_tourid_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.tours_tourid_seq OWNER TO postgres;
+
+--
+-- TOC entry 5096 (class 0 OID 0)
+-- Dependencies: 229
+-- Name: tours_tourid_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.tours_tourid_seq OWNED BY public.tours.tourid;
+
+
+--
+-- TOC entry 222 (class 1259 OID 16407)
+-- Name: tourtypes; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tourtypes (
+    tourtypeid integer NOT NULL,
+    typename character varying(100) NOT NULL,
+    description text
+);
+
+
+ALTER TABLE public.tourtypes OWNER TO postgres;
+
+--
+-- TOC entry 221 (class 1259 OID 16406)
+-- Name: tourtypes_tourtypeid_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.tourtypes_tourtypeid_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.tourtypes_tourtypeid_seq OWNER TO postgres;
+
+--
+-- TOC entry 5099 (class 0 OID 0)
+-- Dependencies: 221
+-- Name: tourtypes_tourtypeid_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.tourtypes_tourtypeid_seq OWNED BY public.tourtypes.tourtypeid;
+
+
+--
+-- TOC entry 241 (class 1259 OID 24586)
+-- Name: view_tourratings; Type: VIEW; Schema: public; Owner: postgres
+--
+
+CREATE VIEW public.view_tourratings AS
+ SELECT tourid,
+    count(reviewid) AS reviewcount,
+    round(avg(rating), 1) AS averagerating
+   FROM public.reviews
+  GROUP BY tourid;
+
+
+ALTER VIEW public.view_tourratings OWNER TO postgres;
+
+--
+-- TOC entry 4827 (class 2604 OID 16495)
+-- Name: accommodations accommodationid; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.accommodations ALTER COLUMN accommodationid SET DEFAULT nextval('public.accommodations_accommodationid_seq'::regclass);
+
+
+--
+-- TOC entry 4835 (class 2604 OID 16639)
+-- Name: auditlog logid; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.auditlog ALTER COLUMN logid SET DEFAULT nextval('public.auditlog_logid_seq'::regclass);
+
+
+--
+-- TOC entry 4828 (class 2604 OID 16513)
+-- Name: bookings bookingid; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.bookings ALTER COLUMN bookingid SET DEFAULT nextval('public.bookings_bookingid_seq'::regclass);
+
+
+--
+-- TOC entry 4819 (class 2604 OID 16393)
+-- Name: clients clientid; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.clients ALTER COLUMN clientid SET DEFAULT nextval('public.clients_clientid_seq'::regclass);
+
+
+--
+-- TOC entry 4823 (class 2604 OID 16433)
+-- Name: managercontracts contractid; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.managercontracts ALTER COLUMN contractid SET DEFAULT nextval('public.managercontracts_contractid_seq'::regclass);
+
+
+--
+-- TOC entry 4822 (class 2604 OID 16421)
+-- Name: managers managerid; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.managers ALTER COLUMN managerid SET DEFAULT nextval('public.managers_managerid_seq'::regclass);
+
+
+--
+-- TOC entry 4824 (class 2604 OID 16449)
+-- Name: partners partnerid; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.partners ALTER COLUMN partnerid SET DEFAULT nextval('public.partners_partnerid_seq'::regclass);
+
+
+--
+-- TOC entry 4831 (class 2604 OID 16544)
+-- Name: payments paymentid; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.payments ALTER COLUMN paymentid SET DEFAULT nextval('public.payments_paymentid_seq'::regclass);
+
+
+--
+-- TOC entry 4833 (class 2604 OID 16561)
+-- Name: reviews reviewid; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.reviews ALTER COLUMN reviewid SET DEFAULT nextval('public.reviews_reviewid_seq'::regclass);
+
+
+--
+-- TOC entry 4825 (class 2604 OID 16462)
+-- Name: tours tourid; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tours ALTER COLUMN tourid SET DEFAULT nextval('public.tours_tourid_seq'::regclass);
+
+
+--
+-- TOC entry 4821 (class 2604 OID 16410)
+-- Name: tourtypes tourtypeid; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tourtypes ALTER COLUMN tourtypeid SET DEFAULT nextval('public.tourtypes_tourtypeid_seq'::regclass);
+
+
+--
+-- TOC entry 5044 (class 0 OID 16492)
+-- Dependencies: 232
+-- Data for Name: accommodations; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+
+
+--
+-- TOC entry 5052 (class 0 OID 16636)
+-- Dependencies: 240
+-- Data for Name: auditlog; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (1, '2025-12-15 17:24:20.357621', 'postgres', 'INSERT', 'managers', '1', NULL, '{"email": null, "phone": null, "db_login": "manager_petrov", "hiredate": "1999-04-16", "lastname": "Романов", "position": "Старший", "firstname": "Пётр", "managerid": 1}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (2, '2025-12-15 17:25:25.706253', 'postgres', 'INSERT', 'tours', '1', NULL, '{"tourid": 1, "enddate": "2025-06-25", "basecost": 150000.00, "isactive": true, "managerid": 1, "partnerid": 1, "startdate": "2025-06-13", "tourtypeid": 1, "description": "", "destination": "Турция, Анталья"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (3, '2025-12-15 17:27:03.38988', 'postgres', 'INSERT', 'clients', '1', NULL, '{"email": "petr@mail.ru", "phone": "89185663451", "clientid": 1, "lastname": "Тугриков", "firstname": "Василий", "passportdata": "1234567890", "passwordhash": "hash123", "registrationdate": "2025-12-15T17:27:03.38988"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (4, '2025-12-15 17:27:21.370599', 'postgres', 'INSERT', 'bookings', '1', NULL, '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 1, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-15T17:27:21.370599", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (5, '2025-12-18 15:41:47.57905', 'client_app_bot', 'INSERT', 'bookings', '8', NULL, '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 8, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-18T15:41:47.57905", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (6, '2025-12-18 16:23:27.058978', 'client_app_bot', 'INSERT', 'bookings', '9', NULL, '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 9, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-18T16:23:27.058978", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (7, '2025-12-18 19:30:14.490369', 'client_app_bot', 'UPDATE', 'bookings', '9', '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 9, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-18T16:23:27.058978", "paymentstatus": "Не оплачено"}', '{"status": "Аннулировано", "tourid": 1, "clientid": 1, "bookingid": 9, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-18T16:23:27.058978", "paymentstatus": "Не оплачено"}', 'status');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (8, '2025-12-18 19:30:37.972499', 'client_app_bot', 'UPDATE', 'bookings', '8', '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 8, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-18T15:41:47.57905", "paymentstatus": "Не оплачено"}', '{"status": "Аннулировано", "tourid": 1, "clientid": 1, "bookingid": 8, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-18T15:41:47.57905", "paymentstatus": "Не оплачено"}', 'status');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (9, '2025-12-18 19:30:40.426779', 'client_app_bot', 'UPDATE', 'bookings', '1', '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 1, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-15T17:27:21.370599", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 1, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-15T17:27:21.370599", "paymentstatus": "Не оплачено"}', 'status');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (10, '2025-12-18 20:03:39.456312', 'client_app_bot', 'DELETE', 'bookings', '9', '{"status": "Аннулировано", "tourid": 1, "clientid": 1, "bookingid": 9, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-18T16:23:27.058978", "paymentstatus": "Не оплачено"}', NULL, NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (11, '2025-12-18 20:03:40.29837', 'client_app_bot', 'DELETE', 'bookings', '8', '{"status": "Аннулировано", "tourid": 1, "clientid": 1, "bookingid": 8, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-18T15:41:47.57905", "paymentstatus": "Не оплачено"}', NULL, NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (12, '2025-12-18 20:48:35.683412', 'postgres', 'INSERT', 'managers', 'N/A', NULL, '{"email": "finance@agency.com", "phone": "8-911-353-51-52", "db_login": "finance_smirnova", "hiredate": "2023-09-01", "lastname": "Смирнова", "position": "Финансист", "firstname": "Анна", "managerid": 2}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (13, '2025-12-18 21:04:07.091013', 'client_app_bot', 'INSERT', 'payments', '1', NULL, '{"amount": 150000.00, "bookingid": 1, "paymentid": 1, "paymentdate": "2025-12-18T21:04:07.091013", "paymentmethod": "Наличные", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (14, '2025-12-18 21:04:07.091013', 'client_app_bot', 'UPDATE', 'bookings', '1', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 1, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-15T17:27:21.370599", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 1, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-15T17:27:21.370599", "paymentstatus": "Оплачено"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (15, '2025-12-18 21:04:38.748532', 'client_app_bot', 'INSERT', 'bookings', '10', NULL, '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 10, "managerid": 2, "finalprice": 150000.00, "bookingdate": "2025-12-18T21:04:38.748532", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (16, '2025-12-18 21:04:44.404428', 'client_app_bot', 'UPDATE', 'bookings', '10', '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 10, "managerid": 2, "finalprice": 150000.00, "bookingdate": "2025-12-18T21:04:38.748532", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 10, "managerid": 2, "finalprice": 150000.00, "bookingdate": "2025-12-18T21:04:38.748532", "paymentstatus": "Не оплачено"}', 'status');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (17, '2025-12-18 21:05:15.669068', 'client_app_bot', 'INSERT', 'payments', '10', NULL, '{"amount": 120000.00, "bookingid": 10, "paymentid": 2, "paymentdate": "2025-12-18T21:05:15.669068", "paymentmethod": "Наличные", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (18, '2025-12-18 21:05:15.669068', 'client_app_bot', 'UPDATE', 'bookings', '10', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 10, "managerid": 2, "finalprice": 150000.00, "bookingdate": "2025-12-18T21:04:38.748532", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 10, "managerid": 2, "finalprice": 150000.00, "bookingdate": "2025-12-18T21:04:38.748532", "paymentstatus": "Частично"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (19, '2025-12-18 22:44:11.765849', 'client_app_bot', 'INSERT', 'bookings', '11', NULL, '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 11, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T22:44:11.765849", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (20, '2025-12-18 22:44:25.112468', 'client_app_bot', 'UPDATE', 'bookings', '11', '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 11, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T22:44:11.765849", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 11, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T22:44:11.765849", "paymentstatus": "Не оплачено"}', 'status');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (21, '2025-12-18 22:46:42.269278', 'client_app_bot', 'INSERT', 'payments', '10', NULL, '{"amount": 30000.00, "bookingid": 10, "paymentid": 9, "paymentdate": "2025-12-18T22:46:42.269278", "paymentmethod": "Наличные", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (22, '2025-12-18 22:46:42.269278', 'client_app_bot', 'UPDATE', 'bookings', '10', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 10, "managerid": 2, "finalprice": 150000.00, "bookingdate": "2025-12-18T21:04:38.748532", "paymentstatus": "Частично"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 10, "managerid": 2, "finalprice": 150000.00, "bookingdate": "2025-12-18T21:04:38.748532", "paymentstatus": "Оплачено"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (23, '2025-12-18 22:46:52.008122', 'client_app_bot', 'INSERT', 'bookings', '12', NULL, '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 12, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-18T22:46:52.008122", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (24, '2025-12-18 22:47:00.03586', 'client_app_bot', 'UPDATE', 'bookings', '12', '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 12, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-18T22:46:52.008122", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 12, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-18T22:46:52.008122", "paymentstatus": "Не оплачено"}', 'status');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (25, '2025-12-18 22:53:31.931005', 'client_app_bot', 'INSERT', 'payments', '12', NULL, '{"amount": 120000.00, "bookingid": 12, "paymentid": 10, "paymentdate": "2025-12-18T22:53:31.931005", "paymentmethod": "Карта *3613", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (26, '2025-12-18 22:53:31.931005', 'client_app_bot', 'UPDATE', 'bookings', '12', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 12, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-18T22:46:52.008122", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 12, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-18T22:46:52.008122", "paymentstatus": "Частично"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (27, '2025-12-18 22:53:39.161969', 'client_app_bot', 'INSERT', 'payments', '12', NULL, '{"amount": 150000.00, "bookingid": 12, "paymentid": 11, "paymentdate": "2025-12-18T22:53:39.161969", "paymentmethod": "Карта *1356", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (28, '2025-12-18 22:53:39.161969', 'client_app_bot', 'UPDATE', 'bookings', '12', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 12, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-18T22:46:52.008122", "paymentstatus": "Частично"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 12, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-18T22:46:52.008122", "paymentstatus": "Оплачено"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (29, '2025-12-18 22:53:46.674388', 'client_app_bot', 'INSERT', 'payments', '11', NULL, '{"amount": 110000.00, "bookingid": 11, "paymentid": 12, "paymentdate": "2025-12-18T22:53:46.674388", "paymentmethod": "Карта *5947", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (30, '2025-12-18 22:53:46.674388', 'client_app_bot', 'UPDATE', 'bookings', '11', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 11, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T22:44:11.765849", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 11, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T22:44:11.765849", "paymentstatus": "Частично"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (31, '2025-12-18 23:13:03.934629', 'client_app_bot', 'INSERT', 'payments', '11', NULL, '{"amount": 40000.00, "bookingid": 11, "paymentid": 13, "paymentdate": "2025-12-18T23:13:03.934629", "paymentmethod": "Карта *4250", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (32, '2025-12-18 23:13:03.934629', 'client_app_bot', 'UPDATE', 'bookings', '11', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 11, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T22:44:11.765849", "paymentstatus": "Частично"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 11, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T22:44:11.765849", "paymentstatus": "Оплачено"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (33, '2025-12-18 23:13:16.927104', 'client_app_bot', 'INSERT', 'bookings', '13', NULL, '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 13, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:13:16.927104", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (34, '2025-12-18 23:13:48.738158', 'client_app_bot', 'UPDATE', 'bookings', '13', '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 13, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:13:16.927104", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 13, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:13:16.927104", "paymentstatus": "Не оплачено"}', 'status');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (35, '2025-12-18 23:13:59.247428', 'client_app_bot', 'INSERT', 'payments', '13', NULL, '{"amount": 10.00, "bookingid": 13, "paymentid": 14, "paymentdate": "2025-12-18T23:13:59.247428", "paymentmethod": "Карта *9949", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (36, '2025-12-18 23:13:59.247428', 'client_app_bot', 'UPDATE', 'bookings', '13', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 13, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:13:16.927104", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 13, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:13:16.927104", "paymentstatus": "Частично"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (37, '2025-12-18 23:30:38.442638', 'client_app_bot', 'INSERT', 'payments', '13', NULL, '{"amount": 149990.00, "bookingid": 13, "paymentid": 15, "paymentdate": "2025-12-18T23:30:38.442638", "paymentmethod": "Карта *3720", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (38, '2025-12-18 23:30:38.442638', 'client_app_bot', 'UPDATE', 'bookings', '13', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 13, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:13:16.927104", "paymentstatus": "Частично"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 13, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:13:16.927104", "paymentstatus": "Оплачено"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (39, '2025-12-18 23:30:41.890319', 'client_app_bot', 'INSERT', 'bookings', '14', NULL, '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 14, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:30:41.890319", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (40, '2025-12-18 23:36:56.004141', 'client_app_bot', 'UPDATE', 'bookings', '14', '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 14, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:30:41.890319", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 14, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:30:41.890319", "paymentstatus": "Не оплачено"}', 'status');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (41, '2025-12-18 23:36:59.336144', 'client_app_bot', 'INSERT', 'payments', '14', NULL, '{"amount": 150000.00, "bookingid": 14, "paymentid": 16, "paymentdate": "2025-12-18T23:36:59.336144", "paymentmethod": "Карта *2741", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (42, '2025-12-18 23:36:59.336144', 'client_app_bot', 'UPDATE', 'bookings', '14', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 14, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:30:41.890319", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 14, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:30:41.890319", "paymentstatus": "Оплачено"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (43, '2025-12-18 23:37:12.616744', 'client_app_bot', 'INSERT', 'bookings', '15', NULL, '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 15, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:37:12.616744", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (44, '2025-12-18 23:37:22.681919', 'client_app_bot', 'UPDATE', 'bookings', '15', '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 15, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:37:12.616744", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 15, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:37:12.616744", "paymentstatus": "Не оплачено"}', 'status');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (45, '2025-12-18 23:37:27.701551', 'client_app_bot', 'INSERT', 'payments', '15', NULL, '{"amount": 120000.00, "bookingid": 15, "paymentid": 17, "paymentdate": "2025-12-18T23:37:27.701551", "paymentmethod": "Карта *4414", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (46, '2025-12-18 23:37:27.701551', 'client_app_bot', 'UPDATE', 'bookings', '15', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 15, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:37:12.616744", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 15, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:37:12.616744", "paymentstatus": "Частично"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (47, '2025-12-18 23:40:52.427391', 'client_app_bot', 'INSERT', 'bookings', '16', NULL, '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 16, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:40:52.427391", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (48, '2025-12-18 23:41:00.099175', 'client_app_bot', 'UPDATE', 'bookings', '16', '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 16, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:40:52.427391", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 16, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:40:52.427391", "paymentstatus": "Не оплачено"}', 'status');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (49, '2025-12-18 23:41:07.919495', 'client_app_bot', 'INSERT', 'payments', '16', NULL, '{"amount": 150000.00, "bookingid": 16, "paymentid": 18, "paymentdate": "2025-12-18T23:41:07.919495", "paymentmethod": "Карта *6589", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (50, '2025-12-18 23:41:07.919495', 'client_app_bot', 'UPDATE', 'bookings', '16', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 16, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:40:52.427391", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 16, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:40:52.427391", "paymentstatus": "Оплачено"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (51, '2025-12-19 00:36:59.380975', 'client_app_bot', 'UPDATE', 'clients', 'N/A', '{"email": "petr@mail.ru", "phone": "89185663451", "clientid": 1, "lastname": "Тугриков", "firstname": "Василий", "passportdata": "1234567890", "passwordhash": "hash123", "registrationdate": "2025-12-15T17:27:03.38988"}', '{"email": "petr@mail.ru", "phone": "89185663451", "clientid": 1, "lastname": "Тугриков", "firstname": "Василий", "passportdata": "1234567890", "passwordhash": "hash123", "registrationdate": "2025-12-15T17:27:03.38988"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (52, '2025-12-19 01:32:02.394295', 'postgres', 'INSERT', 'managers', 'N/A', NULL, '{"email": "admin@agency.com", "phone": "+7-301-485-00-21", "db_login": "admin_petrov", "hiredate": "2020-01-01", "lastname": "Петров", "position": "Администратор", "firstname": "Семён", "managerid": 3}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (53, '2025-12-19 01:41:55.524423', 'client_app_bot', 'UPDATE', 'managers', 'N/A', '{"email": "finance@agency.com", "phone": "8-911-353-51-52", "db_login": "finance_smirnova", "hiredate": "2023-09-01", "lastname": "Смирнова", "position": "Финансист", "firstname": "Анна", "managerid": 2}', '{"email": "", "phone": "", "db_login": "finance_smirnova", "hiredate": "2023-09-01", "lastname": "Смирнова", "position": "Финансист", "firstname": "Анечка", "managerid": 2}', 'email, phone, firstname');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (54, '2025-12-19 01:42:18.566821', 'client_app_bot', 'INSERT', 'managers', 'N/A', NULL, '{"email": "", "phone": "", "db_login": "pashok", "hiredate": "2025-12-19", "lastname": "Дуров", "position": "Визионер", "firstname": "Павел ", "managerid": 4}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (55, '2025-12-19 02:09:28.662976', 'client_app_bot', 'UPDATE', 'managers', 'N/A', '{"email": "admin@agency.com", "phone": "+7-301-485-00-21", "db_login": "admin_petrov", "hiredate": "2020-01-01", "lastname": "Петров", "position": "Администратор", "firstname": "Семён", "managerid": 3}', '{"email": "", "phone": "", "db_login": "admin_petrov", "hiredate": "2020-01-01", "lastname": "Петров", "position": "Администратор", "firstname": "Семён", "managerid": 3}', 'email, phone');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (56, '2025-12-19 02:10:12.990177', 'client_app_bot', 'DELETE', 'managers', 'N/A', '{"email": "", "phone": "", "db_login": "pashok", "hiredate": "2025-12-19", "lastname": "Дуров", "position": "Визионер", "firstname": "Павел ", "managerid": 4}', NULL, NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (57, '2025-12-19 04:58:38.622832', 'client_app_bot', 'INSERT', 'clients', '2', NULL, '{"email": "dh@gmail.com", "phone": "89084334324343", "clientid": 2, "lastname": "Ахметшин ", "firstname": "Сергей", "passportdata": "0319 200000", "passwordhash": "123456", "registrationdate": "2025-12-19T04:58:38.622832"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (58, '2025-12-19 04:59:34.396197', 'client_app_bot', 'INSERT', 'clients', '3', NULL, '{"email": "a@gmail.com", "phone": "424433244234", "clientid": 3, "lastname": "Фин", "firstname": "Абоба", "passportdata": "0319 111111", "passwordhash": "123456", "registrationdate": "2025-12-19T04:59:34.396197"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (59, '2025-12-19 13:37:04.833941', 'client_app_bot', 'INSERT', 'tours', 'N/A', NULL, '{"tourid": 2, "enddate": "2025-06-30", "basecost": 100.00, "isactive": true, "managerid": 1, "partnerid": 1, "startdate": "2025-06-19", "tourtypeid": 1, "description": "Бурдж-Халифа", "destination": "Дубай"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (60, '2025-12-23 15:48:13.365818', 'client_app_bot', 'UPDATE', 'tours', 'N/A', '{"tourid": 2, "enddate": "2025-06-30", "basecost": 100.00, "isactive": true, "managerid": 1, "partnerid": 1, "startdate": "2025-06-19", "tourtypeid": 1, "description": "Бурдж-Халифа", "destination": "Дубай"}', '{"tourid": 2, "enddate": "2025-06-30", "basecost": 100.00, "isactive": true, "managerid": 1, "partnerid": 1, "startdate": "2025-06-19", "tourtypeid": 1, "description": "Бурдж-Халифа", "destination": "Челяба-ОАЭ"}', 'destination');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (61, '2025-12-23 15:48:16.022425', 'client_app_bot', 'DELETE', 'tours', 'N/A', '{"tourid": 2, "enddate": "2025-06-30", "basecost": 100.00, "isactive": true, "managerid": 1, "partnerid": 1, "startdate": "2025-06-19", "tourtypeid": 1, "description": "Бурдж-Халифа", "destination": "Челяба-ОАЭ"}', NULL, NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (62, '2025-12-24 00:47:04.147454', 'client_app_bot', 'INSERT', 'bookings', '17', NULL, '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 17, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-24T00:47:04.147454", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (63, '2025-12-24 12:22:31.494106', 'client_app_bot', 'INSERT', 'payments', '15', NULL, '{"amount": 30000.00, "bookingid": 15, "paymentid": 19, "paymentdate": "2025-12-24T12:22:31.494106", "paymentmethod": "Карта *6149", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (64, '2025-12-24 12:22:31.494106', 'client_app_bot', 'UPDATE', 'bookings', '15', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 15, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:37:12.616744", "paymentstatus": "Частично"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 15, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-18T23:37:12.616744", "paymentstatus": "Оплачено"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (65, '2025-12-24 12:22:51.580782', 'client_app_bot', 'INSERT', 'bookings', '18', NULL, '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 18, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-24T12:22:51.580782", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (66, '2025-12-24 20:42:50.047611', 'client_app_bot', 'UPDATE', 'bookings', '17', '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 17, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-24T00:47:04.147454", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 17, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-24T00:47:04.147454", "paymentstatus": "Не оплачено"}', 'status');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (67, '2025-12-24 23:56:17.676254', 'client_app_bot', 'INSERT', 'payments', '17', NULL, '{"amount": 150000.00, "bookingid": 17, "paymentid": 20, "paymentdate": "2025-12-24T23:56:17.676254", "paymentmethod": "Карта *8216", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (68, '2025-12-24 23:56:17.676254', 'client_app_bot', 'UPDATE', 'bookings', '17', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 17, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-24T00:47:04.147454", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 1, "bookingid": 17, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-24T00:47:04.147454", "paymentstatus": "Оплачено"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (69, '2025-12-25 00:02:46.678939', 'client_app_bot', 'INSERT', 'tours', 'N/A', NULL, '{"tourid": 3, "enddate": "2025-07-10", "basecost": 30000000.00, "isactive": true, "managerid": 1, "partnerid": 1, "startdate": "2025-06-30", "tourtypeid": 3, "description": "На реплике Титаника", "destination": "Дубай"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (70, '2025-12-25 00:04:09.381168', 'client_app_bot', 'INSERT', 'clients', '4', NULL, '{"email": "gpepapa@mail.ru", "phone": "89185558811", "clientid": 4, "lastname": "Ванадиев", "firstname": "Радий", "passportdata": "0311456511", "passwordhash": "hash123", "registrationdate": "2025-12-25T00:04:09.381168"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (71, '2025-12-25 00:04:42.466687', 'client_app_bot', 'INSERT', 'bookings', '19', NULL, '{"status": "В обработке", "tourid": 3, "clientid": 4, "bookingid": 19, "managerid": null, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:04:42.466687", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (72, '2025-12-25 00:12:17.1248', 'client_app_bot', 'INSERT', 'bookings', '20', NULL, '{"status": "В обработке", "tourid": 3, "clientid": 4, "bookingid": 20, "managerid": 1, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:12:17.1248", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (73, '2025-12-25 00:12:56.883572', 'client_app_bot', 'UPDATE', 'bookings', '20', '{"status": "В обработке", "tourid": 3, "clientid": 4, "bookingid": 20, "managerid": 1, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:12:17.1248", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 3, "clientid": 4, "bookingid": 20, "managerid": 1, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:12:17.1248", "paymentstatus": "Не оплачено"}', 'status');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (74, '2025-12-25 00:13:31.903538', 'client_app_bot', 'INSERT', 'payments', '20', NULL, '{"amount": 30000000.00, "bookingid": 20, "paymentid": 21, "paymentdate": "2025-12-25T00:13:31.903538", "paymentmethod": "Карта *1149", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (75, '2025-12-25 00:13:31.903538', 'client_app_bot', 'UPDATE', 'bookings', '20', '{"status": "Подтверждено", "tourid": 3, "clientid": 4, "bookingid": 20, "managerid": 1, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:12:17.1248", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 3, "clientid": 4, "bookingid": 20, "managerid": 1, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:12:17.1248", "paymentstatus": "Оплачено"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (76, '2025-12-25 00:25:50.685503', 'client_app_bot', 'INSERT', 'bookings', '21', NULL, '{"status": "В обработке", "tourid": 3, "clientid": 1, "bookingid": 21, "managerid": 1, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:25:50.685503", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (77, '2025-12-25 00:51:37.936206', 'client_app_bot', 'INSERT', 'bookings', '22', NULL, '{"status": "В обработке", "tourid": 3, "clientid": 1, "bookingid": 22, "managerid": null, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:51:37.936206", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (78, '2025-12-25 00:52:09.359422', 'client_app_bot', 'UPDATE', 'bookings', '18', '{"status": "В обработке", "tourid": 1, "clientid": 1, "bookingid": 18, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-24T12:22:51.580782", "paymentstatus": "Не оплачено"}', '{"status": "Аннулировано", "tourid": 1, "clientid": 1, "bookingid": 18, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-24T12:22:51.580782", "paymentstatus": "Не оплачено"}', 'status, managerid');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (79, '2025-12-25 00:52:15.218066', 'client_app_bot', 'UPDATE', 'bookings', '19', '{"status": "В обработке", "tourid": 3, "clientid": 4, "bookingid": 19, "managerid": null, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:04:42.466687", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 3, "clientid": 4, "bookingid": 19, "managerid": 1, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:04:42.466687", "paymentstatus": "Не оплачено"}', 'status, managerid');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (80, '2025-12-25 00:53:49.750818', 'client_app_bot', 'UPDATE', 'bookings', '21', '{"status": "В обработке", "tourid": 3, "clientid": 1, "bookingid": 21, "managerid": 1, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:25:50.685503", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 3, "clientid": 1, "bookingid": 21, "managerid": 1, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:25:50.685503", "paymentstatus": "Не оплачено"}', 'status');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (81, '2025-12-25 00:54:10.617678', 'client_app_bot', 'INSERT', 'payments', '21', NULL, '{"amount": 100.00, "bookingid": 21, "paymentid": 22, "paymentdate": "2025-12-25T00:54:10.617678", "paymentmethod": "Карта *4064", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (82, '2025-12-25 00:54:10.617678', 'client_app_bot', 'UPDATE', 'bookings', '21', '{"status": "Подтверждено", "tourid": 3, "clientid": 1, "bookingid": 21, "managerid": 1, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:25:50.685503", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 3, "clientid": 1, "bookingid": 21, "managerid": 1, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:25:50.685503", "paymentstatus": "Частично"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (83, '2025-12-25 00:54:14.633366', 'client_app_bot', 'INSERT', 'payments', '21', NULL, '{"amount": 29999900.00, "bookingid": 21, "paymentid": 23, "paymentdate": "2025-12-25T00:54:14.633366", "paymentmethod": "Карта *7040", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (84, '2025-12-25 00:54:14.633366', 'client_app_bot', 'UPDATE', 'bookings', '21', '{"status": "Подтверждено", "tourid": 3, "clientid": 1, "bookingid": 21, "managerid": 1, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:25:50.685503", "paymentstatus": "Частично"}', '{"status": "Подтверждено", "tourid": 3, "clientid": 1, "bookingid": 21, "managerid": 1, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:25:50.685503", "paymentstatus": "Оплачено"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (85, '2025-12-25 01:17:09.418242', 'client_app_bot', 'UPDATE', 'bookings', '22', '{"status": "В обработке", "tourid": 3, "clientid": 1, "bookingid": 22, "managerid": null, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:51:37.936206", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 3, "clientid": 1, "bookingid": 22, "managerid": 1, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:51:37.936206", "paymentstatus": "Не оплачено"}', 'status, managerid');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (86, '2025-12-25 01:17:29.92996', 'client_app_bot', 'INSERT', 'payments', '22', NULL, '{"amount": 30000000.00, "bookingid": 22, "paymentid": 24, "paymentdate": "2025-12-25T01:17:29.92996", "paymentmethod": "Карта *4230", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (87, '2025-12-25 01:17:29.92996', 'client_app_bot', 'UPDATE', 'bookings', '22', '{"status": "Подтверждено", "tourid": 3, "clientid": 1, "bookingid": 22, "managerid": 1, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:51:37.936206", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 3, "clientid": 1, "bookingid": 22, "managerid": 1, "finalprice": 30000000.00, "bookingdate": "2025-12-25T00:51:37.936206", "paymentstatus": "Оплачено"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (88, '2025-12-25 01:20:56.970803', 'client_app_bot', 'INSERT', 'clients', '5', NULL, '{"email": "var@mail.ru", "phone": "89137678948", "clientid": 5, "lastname": "Шпротова", "firstname": "Варвара", "passportdata": "0314244799", "passwordhash": "hash123", "registrationdate": "2025-12-25T01:20:56.970803"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (89, '2025-12-25 01:21:18.939575', 'client_app_bot', 'INSERT', 'bookings', '23', NULL, '{"status": "В обработке", "tourid": 1, "clientid": 5, "bookingid": 23, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-25T01:21:18.939575", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (90, '2025-12-25 01:21:37.905361', 'client_app_bot', 'UPDATE', 'bookings', '23', '{"status": "В обработке", "tourid": 1, "clientid": 5, "bookingid": 23, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-25T01:21:18.939575", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 5, "bookingid": 23, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-25T01:21:18.939575", "paymentstatus": "Не оплачено"}', 'status, managerid');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (91, '2025-12-25 01:41:55.519777', 'client_app_bot', 'INSERT', 'payments', '23', NULL, '{"amount": 150000.00, "bookingid": 23, "paymentid": 25, "paymentdate": "2025-12-25T01:41:55.519777", "paymentmethod": "Карта *3752", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (92, '2025-12-25 01:41:55.519777', 'client_app_bot', 'UPDATE', 'bookings', '23', '{"status": "Подтверждено", "tourid": 1, "clientid": 5, "bookingid": 23, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-25T01:21:18.939575", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 5, "bookingid": 23, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-25T01:21:18.939575", "paymentstatus": "Оплачено"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (124, '2025-12-26 02:59:26.369359', 'client_app_bot', 'INSERT', 'bookings', '24', NULL, '{"status": "В обработке", "tourid": 1, "clientid": 2, "bookingid": 24, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-26T02:59:26.369359", "paymentstatus": "Не оплачено"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (125, '2025-12-26 03:01:44.982259', 'client_app_bot', 'UPDATE', 'bookings', '24', '{"status": "В обработке", "tourid": 1, "clientid": 2, "bookingid": 24, "managerid": null, "finalprice": 150000.00, "bookingdate": "2025-12-26T02:59:26.369359", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 2, "bookingid": 24, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-26T02:59:26.369359", "paymentstatus": "Не оплачено"}', 'status, managerid');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (126, '2025-12-26 03:11:27.69849', 'client_app_bot', 'INSERT', 'tours', 'N/A', NULL, '{"tourid": 4, "enddate": "2025-02-01", "basecost": 11111111.00, "isactive": true, "managerid": 1, "partnerid": 1, "startdate": "2025-01-01", "tourtypeid": 2, "description": "Каньоны Дагестана", "destination": "Дагестан"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (127, '2025-12-26 03:11:37.501336', 'client_app_bot', 'DELETE', 'tours', 'N/A', '{"tourid": 4, "enddate": "2025-02-01", "basecost": 11111111.00, "isactive": true, "managerid": 1, "partnerid": 1, "startdate": "2025-01-01", "tourtypeid": 2, "description": "Каньоны Дагестана", "destination": "Дагестан"}', NULL, NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (128, '2025-12-26 03:11:47.291921', 'client_app_bot', 'UPDATE', 'tours', 'N/A', '{"tourid": 3, "enddate": "2025-07-10", "basecost": 30000000.00, "isactive": true, "managerid": 1, "partnerid": 1, "startdate": "2025-06-30", "tourtypeid": 3, "description": "На реплике Титаника", "destination": "Дубай"}', '{"tourid": 3, "enddate": "2025-07-10", "basecost": 300000.00, "isactive": true, "managerid": 1, "partnerid": 1, "startdate": "2025-06-30", "tourtypeid": 3, "description": "На реплике Титаника", "destination": "Дубай"}', 'basecost');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (129, '2025-12-26 03:12:48.758691', 'client_app_bot', 'INSERT', 'tours', 'N/A', NULL, '{"tourid": 5, "enddate": "2025-02-01", "basecost": 55660.00, "isactive": true, "managerid": 1, "partnerid": 1, "startdate": "2025-01-01", "tourtypeid": 2, "description": "Живописные долины Дагестана", "destination": "Дагестан"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (130, '2025-12-26 03:17:44.317309', 'client_app_bot', 'INSERT', 'payments', '24', NULL, '{"amount": 150000.00, "bookingid": 24, "paymentid": 58, "paymentdate": "2025-12-26T03:17:44.317309", "paymentmethod": "Карта *9402", "transactioninfo": "Оплата через Desktop App"}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (131, '2025-12-26 03:17:44.317309', 'client_app_bot', 'UPDATE', 'bookings', '24', '{"status": "Подтверждено", "tourid": 1, "clientid": 2, "bookingid": 24, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-26T02:59:26.369359", "paymentstatus": "Не оплачено"}', '{"status": "Подтверждено", "tourid": 1, "clientid": 2, "bookingid": 24, "managerid": 1, "finalprice": 150000.00, "bookingdate": "2025-12-26T02:59:26.369359", "paymentstatus": "Оплачено"}', 'paymentstatus');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (132, '2025-12-26 03:38:40.722527', 'client_app_bot', 'UPDATE', 'managers', 'N/A', '{"email": null, "phone": null, "db_login": "manager_petrov", "hiredate": "1999-04-16", "lastname": "Романов", "position": "Старший", "firstname": "Пётр", "managerid": 1}', '{"email": "PT@gmail.com", "phone": "89154567712", "db_login": "manager_petrov", "hiredate": "1999-04-16", "lastname": "Романов", "position": "Старший", "firstname": "Пётр", "managerid": 1}', 'email, phone');
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (133, '2025-12-26 03:42:56.485446', 'client_app_bot', 'INSERT', 'managers', 'N/A', NULL, '{"email": "miha@gmail.com", "phone": "89115915143", "db_login": "miha_manager", "hiredate": "2025-12-26", "lastname": "Шумахер", "position": "Менеджер", "firstname": "Михаэль", "managerid": 5}', NULL);
+INSERT INTO public.auditlog (logid, eventdate, dbuser, operationtype, tablename, recordid, olddata, newdata, changedfields) VALUES (134, '2025-12-26 03:45:02.696495', 'client_app_bot', 'DELETE', 'managers', 'N/A', '{"email": "miha@gmail.com", "phone": "89115915143", "db_login": "miha_manager", "hiredate": "2025-12-26", "lastname": "Шумахер", "position": "Менеджер", "firstname": "Михаэль", "managerid": 5}', NULL, NULL);
+
+
+--
+-- TOC entry 5046 (class 0 OID 16510)
+-- Dependencies: 234
+-- Data for Name: bookings; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.bookings (bookingid, tourid, clientid, managerid, bookingdate, status, paymentstatus, finalprice) VALUES (1, 1, 1, 1, '2025-12-15 17:27:21.370599', 'Подтверждено', 'Оплачено', 150000.00);
+INSERT INTO public.bookings (bookingid, tourid, clientid, managerid, bookingdate, status, paymentstatus, finalprice) VALUES (10, 1, 1, 2, '2025-12-18 21:04:38.748532', 'Подтверждено', 'Оплачено', 150000.00);
+INSERT INTO public.bookings (bookingid, tourid, clientid, managerid, bookingdate, status, paymentstatus, finalprice) VALUES (12, 1, 1, 1, '2025-12-18 22:46:52.008122', 'Подтверждено', 'Оплачено', 150000.00);
+INSERT INTO public.bookings (bookingid, tourid, clientid, managerid, bookingdate, status, paymentstatus, finalprice) VALUES (11, 1, 1, NULL, '2025-12-18 22:44:11.765849', 'Подтверждено', 'Оплачено', 150000.00);
+INSERT INTO public.bookings (bookingid, tourid, clientid, managerid, bookingdate, status, paymentstatus, finalprice) VALUES (13, 1, 1, NULL, '2025-12-18 23:13:16.927104', 'Подтверждено', 'Оплачено', 150000.00);
+INSERT INTO public.bookings (bookingid, tourid, clientid, managerid, bookingdate, status, paymentstatus, finalprice) VALUES (14, 1, 1, NULL, '2025-12-18 23:30:41.890319', 'Подтверждено', 'Оплачено', 150000.00);
+INSERT INTO public.bookings (bookingid, tourid, clientid, managerid, bookingdate, status, paymentstatus, finalprice) VALUES (16, 1, 1, NULL, '2025-12-18 23:40:52.427391', 'Подтверждено', 'Оплачено', 150000.00);
+INSERT INTO public.bookings (bookingid, tourid, clientid, managerid, bookingdate, status, paymentstatus, finalprice) VALUES (15, 1, 1, NULL, '2025-12-18 23:37:12.616744', 'Подтверждено', 'Оплачено', 150000.00);
+INSERT INTO public.bookings (bookingid, tourid, clientid, managerid, bookingdate, status, paymentstatus, finalprice) VALUES (17, 1, 1, 1, '2025-12-24 00:47:04.147454', 'Подтверждено', 'Оплачено', 150000.00);
+INSERT INTO public.bookings (bookingid, tourid, clientid, managerid, bookingdate, status, paymentstatus, finalprice) VALUES (20, 3, 4, 1, '2025-12-25 00:12:17.1248', 'Подтверждено', 'Оплачено', 30000000.00);
+INSERT INTO public.bookings (bookingid, tourid, clientid, managerid, bookingdate, status, paymentstatus, finalprice) VALUES (18, 1, 1, 1, '2025-12-24 12:22:51.580782', 'Аннулировано', 'Не оплачено', 150000.00);
+INSERT INTO public.bookings (bookingid, tourid, clientid, managerid, bookingdate, status, paymentstatus, finalprice) VALUES (19, 3, 4, 1, '2025-12-25 00:04:42.466687', 'Подтверждено', 'Не оплачено', 30000000.00);
+INSERT INTO public.bookings (bookingid, tourid, clientid, managerid, bookingdate, status, paymentstatus, finalprice) VALUES (21, 3, 1, 1, '2025-12-25 00:25:50.685503', 'Подтверждено', 'Оплачено', 30000000.00);
+INSERT INTO public.bookings (bookingid, tourid, clientid, managerid, bookingdate, status, paymentstatus, finalprice) VALUES (22, 3, 1, 1, '2025-12-25 00:51:37.936206', 'Подтверждено', 'Оплачено', 30000000.00);
+INSERT INTO public.bookings (bookingid, tourid, clientid, managerid, bookingdate, status, paymentstatus, finalprice) VALUES (23, 1, 5, 1, '2025-12-25 01:21:18.939575', 'Подтверждено', 'Оплачено', 150000.00);
+INSERT INTO public.bookings (bookingid, tourid, clientid, managerid, bookingdate, status, paymentstatus, finalprice) VALUES (24, 1, 2, 1, '2025-12-26 02:59:26.369359', 'Подтверждено', 'Оплачено', 150000.00);
+
+
+--
+-- TOC entry 5032 (class 0 OID 16390)
+-- Dependencies: 220
+-- Data for Name: clients; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.clients (clientid, firstname, lastname, phone, email, passwordhash, passportdata, registrationdate) VALUES (1, 'Василий', 'Тугриков', '89185663451', 'petr@mail.ru', 'hash123', '1234567890', '2025-12-15 17:27:03.38988');
+INSERT INTO public.clients (clientid, firstname, lastname, phone, email, passwordhash, passportdata, registrationdate) VALUES (2, 'Сергей', 'Ахметшин ', '89084334324343', 'dh@gmail.com', '123456', '0319 200000', '2025-12-19 04:58:38.622832');
+INSERT INTO public.clients (clientid, firstname, lastname, phone, email, passwordhash, passportdata, registrationdate) VALUES (3, 'Абоба', 'Фин', '424433244234', 'a@gmail.com', '123456', '0319 111111', '2025-12-19 04:59:34.396197');
+INSERT INTO public.clients (clientid, firstname, lastname, phone, email, passwordhash, passportdata, registrationdate) VALUES (4, 'Радий', 'Ванадиев', '89185558811', 'gpepapa@mail.ru', 'hash123', '0311456511', '2025-12-25 00:04:09.381168');
+INSERT INTO public.clients (clientid, firstname, lastname, phone, email, passwordhash, passportdata, registrationdate) VALUES (5, 'Варвара', 'Шпротова', '89137678948', 'var@mail.ru', 'hash123', '0314244799', '2025-12-25 01:20:56.970803');
+
+
+--
+-- TOC entry 5038 (class 0 OID 16430)
+-- Dependencies: 226
+-- Data for Name: managercontracts; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+
+
+--
+-- TOC entry 5036 (class 0 OID 16418)
+-- Dependencies: 224
+-- Data for Name: managers; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.managers (managerid, firstname, lastname, phone, email, "position", hiredate, db_login) VALUES (2, 'Анечка', 'Смирнова', '', '', 'Финансист', '2023-09-01', 'finance_smirnova');
+INSERT INTO public.managers (managerid, firstname, lastname, phone, email, "position", hiredate, db_login) VALUES (3, 'Семён', 'Петров', '', '', 'Администратор', '2020-01-01', 'admin_petrov');
+INSERT INTO public.managers (managerid, firstname, lastname, phone, email, "position", hiredate, db_login) VALUES (1, 'Пётр', 'Романов', '89154567712', 'PT@gmail.com', 'Старший', '1999-04-16', 'manager_petrov');
+
+
+--
+-- TOC entry 5040 (class 0 OID 16446)
+-- Dependencies: 228
+-- Data for Name: partners; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.partners (partnerid, name, partnertype, contacts, description) VALUES (1, 'Аэрофлот', 'Туроператор', NULL, NULL);
+
+
+--
+-- TOC entry 5048 (class 0 OID 16541)
+-- Dependencies: 236
+-- Data for Name: payments; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (1, 1, '2025-12-18 21:04:07.091013', 150000.00, 'Наличные', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (2, 10, '2025-12-18 21:05:15.669068', 120000.00, 'Наличные', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (9, 10, '2025-12-18 22:46:42.269278', 30000.00, 'Наличные', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (10, 12, '2025-12-18 22:53:31.931005', 120000.00, 'Карта *3613', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (11, 12, '2025-12-18 22:53:39.161969', 150000.00, 'Карта *1356', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (12, 11, '2025-12-18 22:53:46.674388', 110000.00, 'Карта *5947', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (13, 11, '2025-12-18 23:13:03.934629', 40000.00, 'Карта *4250', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (14, 13, '2025-12-18 23:13:59.247428', 10.00, 'Карта *9949', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (15, 13, '2025-12-18 23:30:38.442638', 149990.00, 'Карта *3720', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (16, 14, '2025-12-18 23:36:59.336144', 150000.00, 'Карта *2741', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (17, 15, '2025-12-18 23:37:27.701551', 120000.00, 'Карта *4414', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (18, 16, '2025-12-18 23:41:07.919495', 150000.00, 'Карта *6589', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (19, 15, '2025-12-24 12:22:31.494106', 30000.00, 'Карта *6149', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (20, 17, '2025-12-24 23:56:17.676254', 150000.00, 'Карта *8216', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (21, 20, '2025-12-25 00:13:31.903538', 30000000.00, 'Карта *1149', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (22, 21, '2025-12-25 00:54:10.617678', 100.00, 'Карта *4064', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (23, 21, '2025-12-25 00:54:14.633366', 29999900.00, 'Карта *7040', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (24, 22, '2025-12-25 01:17:29.92996', 30000000.00, 'Карта *4230', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (25, 23, '2025-12-25 01:41:55.519777', 150000.00, 'Карта *3752', 'Оплата через Desktop App');
+INSERT INTO public.payments (paymentid, bookingid, paymentdate, amount, paymentmethod, transactioninfo) VALUES (58, 24, '2025-12-26 03:17:44.317309', 150000.00, 'Карта *9402', 'Оплата через Desktop App');
+
+
+--
+-- TOC entry 5050 (class 0 OID 16558)
+-- Dependencies: 238
+-- Data for Name: reviews; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.reviews (reviewid, tourid, clientid, reviewdate, description, rating) VALUES (1, 1, 1, '2025-12-24 00:50:07.511618', 'Потраченного времени жаль', 1);
+INSERT INTO public.reviews (reviewid, tourid, clientid, reviewdate, description, rating) VALUES (5, 3, 1, '2025-12-25 00:54:32.707113', 'Поднялся на вершину башни', 5);
+INSERT INTO public.reviews (reviewid, tourid, clientid, reviewdate, description, rating) VALUES (9, 1, 5, '2025-12-25 01:42:16.462995', 'Нервные гиды', 4);
+INSERT INTO public.reviews (reviewid, tourid, clientid, reviewdate, description, rating) VALUES (42, 1, 2, '2025-12-26 03:21:41.414921', 'Я съел все Кебабы в Анталье, восхитетельно, но я отравился', 4);
+
+
+--
+-- TOC entry 5042 (class 0 OID 16459)
+-- Dependencies: 230
+-- Data for Name: tours; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.tours (tourid, tourtypeid, managerid, partnerid, destination, startdate, enddate, basecost, description, isactive) VALUES (1, 1, 1, 1, 'Турция, Анталья', '2025-06-13', '2025-06-25', 150000.00, '', true);
+INSERT INTO public.tours (tourid, tourtypeid, managerid, partnerid, destination, startdate, enddate, basecost, description, isactive) VALUES (3, 3, 1, 1, 'Дубай', '2025-06-30', '2025-07-10', 300000.00, 'На реплике Титаника', true);
+INSERT INTO public.tours (tourid, tourtypeid, managerid, partnerid, destination, startdate, enddate, basecost, description, isactive) VALUES (5, 2, 1, 1, 'Дагестан', '2025-01-01', '2025-02-01', 55660.00, 'Живописные долины Дагестана', true);
+
+
+--
+-- TOC entry 5034 (class 0 OID 16407)
+-- Dependencies: 222
+-- Data for Name: tourtypes; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.tourtypes (tourtypeid, typename, description) VALUES (1, 'Пляжный', NULL);
+INSERT INTO public.tourtypes (tourtypeid, typename, description) VALUES (2, 'Горнолыжный', 'Активный отдых на зимних курортах. Включает прокат снаряжения, skipass и проживание вблизи подъемников.');
+INSERT INTO public.tourtypes (tourtypeid, typename, description) VALUES (3, 'Круизный', 'Морские и речные путешествия на лайнерах по системе "Все включено" с посещением нескольких городов.');
+INSERT INTO public.tourtypes (tourtypeid, typename, description) VALUES (4, 'Лечебно-оздоровительный', 'Отдых в санаториях, SPA-отелях и на термальных источниках. Включает медицинские процедуры.');
+INSERT INTO public.tourtypes (tourtypeid, typename, description) VALUES (5, 'Гастрономический', 'Туры для гурманов: дегустации местных блюд и вин, кулинарные мастер-классы, посещение ферм.');
+INSERT INTO public.tourtypes (tourtypeid, typename, description) VALUES (6, 'Экстремальный', 'Активный туризм с элементами риска: рафтинг, джип-туры, скалолазание, полеты на параплане.');
+INSERT INTO public.tourtypes (tourtypeid, typename, description) VALUES (7, 'Образовательный', 'Языковые курсы, стажировки и культурно-просветительские программы для студентов и взрослых.');
+
+
+--
+-- TOC entry 5102 (class 0 OID 0)
+-- Dependencies: 231
+-- Name: accommodations_accommodationid_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.accommodations_accommodationid_seq', 1, false);
+
+
+--
+-- TOC entry 5103 (class 0 OID 0)
+-- Dependencies: 239
+-- Name: auditlog_logid_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.auditlog_logid_seq', 134, true);
+
+
+--
+-- TOC entry 5104 (class 0 OID 0)
+-- Dependencies: 233
+-- Name: bookings_bookingid_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.bookings_bookingid_seq', 24, true);
+
+
+--
+-- TOC entry 5105 (class 0 OID 0)
+-- Dependencies: 219
+-- Name: clients_clientid_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.clients_clientid_seq', 5, true);
+
+
+--
+-- TOC entry 5106 (class 0 OID 0)
+-- Dependencies: 225
+-- Name: managercontracts_contractid_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.managercontracts_contractid_seq', 1, false);
+
+
+--
+-- TOC entry 5107 (class 0 OID 0)
+-- Dependencies: 223
+-- Name: managers_managerid_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.managers_managerid_seq', 5, true);
+
+
+--
+-- TOC entry 5108 (class 0 OID 0)
+-- Dependencies: 227
+-- Name: partners_partnerid_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.partners_partnerid_seq', 1, true);
+
+
+--
+-- TOC entry 5109 (class 0 OID 0)
+-- Dependencies: 235
+-- Name: payments_paymentid_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.payments_paymentid_seq', 58, true);
+
+
+--
+-- TOC entry 5110 (class 0 OID 0)
+-- Dependencies: 237
+-- Name: reviews_reviewid_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.reviews_reviewid_seq', 42, true);
+
+
+--
+-- TOC entry 5111 (class 0 OID 0)
+-- Dependencies: 229
+-- Name: tours_tourid_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.tours_tourid_seq', 5, true);
+
+
+--
+-- TOC entry 5112 (class 0 OID 0)
+-- Dependencies: 221
+-- Name: tourtypes_tourtypeid_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.tourtypes_tourtypeid_seq', 7, true);
+
+
+--
+-- TOC entry 4856 (class 2606 OID 16503)
+-- Name: accommodations accommodations_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.accommodations
+    ADD CONSTRAINT accommodations_pkey PRIMARY KEY (accommodationid);
+
+
+--
+-- TOC entry 4866 (class 2606 OID 16648)
+-- Name: auditlog auditlog_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.auditlog
+    ADD CONSTRAINT auditlog_pkey PRIMARY KEY (logid);
+
+
+--
+-- TOC entry 4858 (class 2606 OID 16524)
+-- Name: bookings bookings_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.bookings
+    ADD CONSTRAINT bookings_pkey PRIMARY KEY (bookingid);
+
+
+--
+-- TOC entry 4842 (class 2606 OID 16405)
+-- Name: clients clients_email_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.clients
+    ADD CONSTRAINT clients_email_key UNIQUE (email);
+
+
+--
+-- TOC entry 4844 (class 2606 OID 16403)
+-- Name: clients clients_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.clients
+    ADD CONSTRAINT clients_pkey PRIMARY KEY (clientid);
+
+
+--
+-- TOC entry 4850 (class 2606 OID 16439)
+-- Name: managercontracts managercontracts_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.managercontracts
+    ADD CONSTRAINT managercontracts_pkey PRIMARY KEY (contractid);
+
+
+--
+-- TOC entry 4848 (class 2606 OID 16428)
+-- Name: managers managers_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.managers
+    ADD CONSTRAINT managers_pkey PRIMARY KEY (managerid);
+
+
+--
+-- TOC entry 4852 (class 2606 OID 16457)
+-- Name: partners partners_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.partners
+    ADD CONSTRAINT partners_pkey PRIMARY KEY (partnerid);
+
+
+--
+-- TOC entry 4860 (class 2606 OID 16551)
+-- Name: payments payments_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.payments
+    ADD CONSTRAINT payments_pkey PRIMARY KEY (paymentid);
+
+
+--
+-- TOC entry 4862 (class 2606 OID 16570)
+-- Name: reviews reviews_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.reviews
+    ADD CONSTRAINT reviews_pkey PRIMARY KEY (reviewid);
+
+
+--
+-- TOC entry 4854 (class 2606 OID 16475)
+-- Name: tours tours_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tours
+    ADD CONSTRAINT tours_pkey PRIMARY KEY (tourid);
+
+
+--
+-- TOC entry 4846 (class 2606 OID 16416)
+-- Name: tourtypes tourtypes_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tourtypes
+    ADD CONSTRAINT tourtypes_pkey PRIMARY KEY (tourtypeid);
+
+
+--
+-- TOC entry 4864 (class 2606 OID 24585)
+-- Name: reviews unique_client_tour_review; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.reviews
+    ADD CONSTRAINT unique_client_tour_review UNIQUE (clientid, tourid);
+
+
+--
+-- TOC entry 4881 (class 2620 OID 24580)
+-- Name: bookings audit_bookings_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER audit_bookings_trigger AFTER INSERT OR DELETE OR UPDATE ON public.bookings FOR EACH ROW EXECUTE FUNCTION public.system_audit_trigger();
+
+
+--
+-- TOC entry 4878 (class 2620 OID 24579)
+-- Name: clients audit_clients_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER audit_clients_trigger AFTER INSERT OR DELETE OR UPDATE ON public.clients FOR EACH ROW EXECUTE FUNCTION public.system_audit_trigger();
+
+
+--
+-- TOC entry 4879 (class 2620 OID 16653)
+-- Name: managers audit_managers_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER audit_managers_trigger AFTER INSERT OR DELETE OR UPDATE ON public.managers FOR EACH ROW EXECUTE FUNCTION public.system_audit_trigger();
+
+
+--
+-- TOC entry 4882 (class 2620 OID 24581)
+-- Name: payments audit_payments_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER audit_payments_trigger AFTER INSERT OR DELETE OR UPDATE ON public.payments FOR EACH ROW EXECUTE FUNCTION public.system_audit_trigger();
+
+
+--
+-- TOC entry 4880 (class 2620 OID 16652)
+-- Name: tours audit_tours_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER audit_tours_trigger AFTER INSERT OR DELETE OR UPDATE ON public.tours FOR EACH ROW EXECUTE FUNCTION public.system_audit_trigger();
+
+
+--
+-- TOC entry 4871 (class 2606 OID 16504)
+-- Name: accommodations accommodations_tourid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.accommodations
+    ADD CONSTRAINT accommodations_tourid_fkey FOREIGN KEY (tourid) REFERENCES public.tours(tourid) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 4872 (class 2606 OID 16530)
+-- Name: bookings bookings_clientid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.bookings
+    ADD CONSTRAINT bookings_clientid_fkey FOREIGN KEY (clientid) REFERENCES public.clients(clientid);
+
+
+--
+-- TOC entry 4873 (class 2606 OID 16535)
+-- Name: bookings bookings_managerid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.bookings
+    ADD CONSTRAINT bookings_managerid_fkey FOREIGN KEY (managerid) REFERENCES public.managers(managerid);
+
+
+--
+-- TOC entry 4874 (class 2606 OID 16525)
+-- Name: bookings bookings_tourid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.bookings
+    ADD CONSTRAINT bookings_tourid_fkey FOREIGN KEY (tourid) REFERENCES public.tours(tourid);
+
+
+--
+-- TOC entry 4867 (class 2606 OID 16440)
+-- Name: managercontracts managercontracts_managerid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.managercontracts
+    ADD CONSTRAINT managercontracts_managerid_fkey FOREIGN KEY (managerid) REFERENCES public.managers(managerid);
+
+
+--
+-- TOC entry 4875 (class 2606 OID 16552)
+-- Name: payments payments_bookingid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.payments
+    ADD CONSTRAINT payments_bookingid_fkey FOREIGN KEY (bookingid) REFERENCES public.bookings(bookingid);
+
+
+--
+-- TOC entry 4876 (class 2606 OID 16576)
+-- Name: reviews reviews_clientid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.reviews
+    ADD CONSTRAINT reviews_clientid_fkey FOREIGN KEY (clientid) REFERENCES public.clients(clientid);
+
+
+--
+-- TOC entry 4877 (class 2606 OID 16571)
+-- Name: reviews reviews_tourid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.reviews
+    ADD CONSTRAINT reviews_tourid_fkey FOREIGN KEY (tourid) REFERENCES public.tours(tourid);
+
+
+--
+-- TOC entry 4868 (class 2606 OID 16481)
+-- Name: tours tours_managerid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tours
+    ADD CONSTRAINT tours_managerid_fkey FOREIGN KEY (managerid) REFERENCES public.managers(managerid);
+
+
+--
+-- TOC entry 4869 (class 2606 OID 16486)
+-- Name: tours tours_partnerid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tours
+    ADD CONSTRAINT tours_partnerid_fkey FOREIGN KEY (partnerid) REFERENCES public.partners(partnerid);
+
+
+--
+-- TOC entry 4870 (class 2606 OID 16476)
+-- Name: tours tours_tourtypeid_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tours
+    ADD CONSTRAINT tours_tourtypeid_fkey FOREIGN KEY (tourtypeid) REFERENCES public.tourtypes(tourtypeid);
+
+
+--
+-- TOC entry 5058 (class 0 OID 0)
+-- Dependencies: 5
+-- Name: SCHEMA public; Type: ACL; Schema: -; Owner: pg_database_owner
+--
+
+GRANT USAGE ON SCHEMA public TO travelerapprole;
+
+
+--
+-- TOC entry 5059 (class 0 OID 0)
+-- Dependencies: 262
+-- Name: PROCEDURE add_payment(IN p_booking_id integer, IN p_amount numeric, IN p_method character varying, IN p_transaction_info character varying); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON PROCEDURE public.add_payment(IN p_booking_id integer, IN p_amount numeric, IN p_method character varying, IN p_transaction_info character varying) TO financialspecialist;
+GRANT ALL ON PROCEDURE public.add_payment(IN p_booking_id integer, IN p_amount numeric, IN p_method character varying, IN p_transaction_info character varying) TO systemadministrator;
+GRANT ALL ON PROCEDURE public.add_payment(IN p_booking_id integer, IN p_amount numeric, IN p_method character varying, IN p_transaction_info character varying) TO travelerapprole;
+
+
+--
+-- TOC entry 5060 (class 0 OID 0)
+-- Dependencies: 255
+-- Name: FUNCTION check_credentials(p_email character varying, p_password_hash character varying); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.check_credentials(p_email character varying, p_password_hash character varying) TO travelerapprole;
+GRANT ALL ON FUNCTION public.check_credentials(p_email character varying, p_password_hash character varying) TO systemadministrator;
+
+
+--
+-- TOC entry 5061 (class 0 OID 0)
+-- Dependencies: 256
+-- Name: FUNCTION create_booking(p_tour_id integer, p_client_id integer, p_manager_id integer); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.create_booking(p_tour_id integer, p_client_id integer, p_manager_id integer) TO travelerapprole;
+GRANT ALL ON FUNCTION public.create_booking(p_tour_id integer, p_client_id integer, p_manager_id integer) TO clientmanager;
+GRANT ALL ON FUNCTION public.create_booking(p_tour_id integer, p_client_id integer, p_manager_id integer) TO systemadministrator;
+
+
+--
+-- TOC entry 5062 (class 0 OID 0)
+-- Dependencies: 254
+-- Name: FUNCTION create_tour(p_tour_type_id integer, p_manager_id integer, p_partner_id integer, p_destination character varying, p_start_date date, p_end_date date, p_base_cost numeric, p_description text); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.create_tour(p_tour_type_id integer, p_manager_id integer, p_partner_id integer, p_destination character varying, p_start_date date, p_end_date date, p_base_cost numeric, p_description text) TO clientmanager;
+GRANT ALL ON FUNCTION public.create_tour(p_tour_type_id integer, p_manager_id integer, p_partner_id integer, p_destination character varying, p_start_date date, p_end_date date, p_base_cost numeric, p_description text) TO systemadministrator;
+GRANT ALL ON FUNCTION public.create_tour(p_tour_type_id integer, p_manager_id integer, p_partner_id integer, p_destination character varying, p_start_date date, p_end_date date, p_base_cost numeric, p_description text) TO travelerapprole;
+
+
+--
+-- TOC entry 5063 (class 0 OID 0)
+-- Dependencies: 253
+-- Name: PROCEDURE register_client(IN p_firstname character varying, IN p_lastname character varying, IN p_phone character varying, IN p_email character varying, IN p_password_hash character varying, IN p_passport_data character varying); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON PROCEDURE public.register_client(IN p_firstname character varying, IN p_lastname character varying, IN p_phone character varying, IN p_email character varying, IN p_password_hash character varying, IN p_passport_data character varying) TO travelerapprole;
+GRANT ALL ON PROCEDURE public.register_client(IN p_firstname character varying, IN p_lastname character varying, IN p_phone character varying, IN p_email character varying, IN p_password_hash character varying, IN p_passport_data character varying) TO systemadministrator;
+
+
+--
+-- TOC entry 5064 (class 0 OID 0)
+-- Dependencies: 260
+-- Name: FUNCTION report_debtors(); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.report_debtors() TO financialspecialist;
+GRANT ALL ON FUNCTION public.report_debtors() TO systemadministrator;
+
+
+--
+-- TOC entry 5065 (class 0 OID 0)
+-- Dependencies: 258
+-- Name: FUNCTION report_manager_performance(p_start_date date, p_end_date date); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.report_manager_performance(p_start_date date, p_end_date date) TO systemadministrator;
+GRANT ALL ON FUNCTION public.report_manager_performance(p_start_date date, p_end_date date) TO clientmanager;
+
+
+--
+-- TOC entry 5066 (class 0 OID 0)
+-- Dependencies: 259
+-- Name: FUNCTION report_payments_by_period(p_start_date date, p_end_date date); Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON FUNCTION public.report_payments_by_period(p_start_date date, p_end_date date) TO financialspecialist;
+GRANT ALL ON FUNCTION public.report_payments_by_period(p_start_date date, p_end_date date) TO systemadministrator;
+
+
+--
+-- TOC entry 5067 (class 0 OID 0)
+-- Dependencies: 232
+-- Name: TABLE accommodations; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.accommodations TO systemadministrator;
+GRANT SELECT,INSERT,UPDATE ON TABLE public.accommodations TO clientmanager;
+GRANT SELECT ON TABLE public.accommodations TO travelerapprole;
+
+
+--
+-- TOC entry 5069 (class 0 OID 0)
+-- Dependencies: 231
+-- Name: SEQUENCE accommodations_accommodationid_seq; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON SEQUENCE public.accommodations_accommodationid_seq TO systemadministrator;
+GRANT SELECT,USAGE ON SEQUENCE public.accommodations_accommodationid_seq TO clientmanager;
+GRANT SELECT,USAGE ON SEQUENCE public.accommodations_accommodationid_seq TO travelerapprole;
+
+
+--
+-- TOC entry 5071 (class 0 OID 0)
+-- Dependencies: 240
+-- Name: TABLE auditlog; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT ON TABLE public.auditlog TO systemadministrator;
+GRANT SELECT ON TABLE public.auditlog TO travelerapprole;
+
+
+--
+-- TOC entry 5073 (class 0 OID 0)
+-- Dependencies: 239
+-- Name: SEQUENCE auditlog_logid_seq; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT,USAGE ON SEQUENCE public.auditlog_logid_seq TO travelerapprole;
+GRANT SELECT,USAGE ON SEQUENCE public.auditlog_logid_seq TO clientmanager;
+
+
+--
+-- TOC entry 5074 (class 0 OID 0)
+-- Dependencies: 234
+-- Name: TABLE bookings; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.bookings TO systemadministrator;
+GRANT SELECT,INSERT,UPDATE ON TABLE public.bookings TO clientmanager;
+GRANT SELECT ON TABLE public.bookings TO financialspecialist;
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.bookings TO travelerapprole;
+
+
+--
+-- TOC entry 5076 (class 0 OID 0)
+-- Dependencies: 233
+-- Name: SEQUENCE bookings_bookingid_seq; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON SEQUENCE public.bookings_bookingid_seq TO systemadministrator;
+GRANT SELECT,USAGE ON SEQUENCE public.bookings_bookingid_seq TO clientmanager;
+GRANT SELECT,USAGE ON SEQUENCE public.bookings_bookingid_seq TO travelerapprole;
+
+
+--
+-- TOC entry 5077 (class 0 OID 0)
+-- Dependencies: 220
+-- Name: TABLE clients; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.clients TO systemadministrator;
+GRANT SELECT,INSERT,UPDATE ON TABLE public.clients TO clientmanager;
+GRANT SELECT ON TABLE public.clients TO financialspecialist;
+GRANT SELECT,INSERT,UPDATE ON TABLE public.clients TO travelerapprole;
+
+
+--
+-- TOC entry 5079 (class 0 OID 0)
+-- Dependencies: 219
+-- Name: SEQUENCE clients_clientid_seq; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON SEQUENCE public.clients_clientid_seq TO systemadministrator;
+GRANT SELECT,USAGE ON SEQUENCE public.clients_clientid_seq TO clientmanager;
+GRANT SELECT,USAGE ON SEQUENCE public.clients_clientid_seq TO travelerapprole;
+
+
+--
+-- TOC entry 5080 (class 0 OID 0)
+-- Dependencies: 226
+-- Name: TABLE managercontracts; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.managercontracts TO systemadministrator;
+
+
+--
+-- TOC entry 5082 (class 0 OID 0)
+-- Dependencies: 225
+-- Name: SEQUENCE managercontracts_contractid_seq; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON SEQUENCE public.managercontracts_contractid_seq TO systemadministrator;
+GRANT SELECT,USAGE ON SEQUENCE public.managercontracts_contractid_seq TO clientmanager;
+GRANT SELECT,USAGE ON SEQUENCE public.managercontracts_contractid_seq TO travelerapprole;
+
+
+--
+-- TOC entry 5083 (class 0 OID 0)
+-- Dependencies: 224
+-- Name: TABLE managers; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.managers TO systemadministrator;
+GRANT SELECT ON TABLE public.managers TO clientmanager;
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.managers TO travelerapprole;
+
+
+--
+-- TOC entry 5085 (class 0 OID 0)
+-- Dependencies: 223
+-- Name: SEQUENCE managers_managerid_seq; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON SEQUENCE public.managers_managerid_seq TO systemadministrator;
+GRANT SELECT,USAGE ON SEQUENCE public.managers_managerid_seq TO clientmanager;
+GRANT SELECT,USAGE ON SEQUENCE public.managers_managerid_seq TO travelerapprole;
+
+
+--
+-- TOC entry 5086 (class 0 OID 0)
+-- Dependencies: 228
+-- Name: TABLE partners; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.partners TO systemadministrator;
+GRANT SELECT ON TABLE public.partners TO clientmanager;
+GRANT SELECT ON TABLE public.partners TO travelerapprole;
+
+
+--
+-- TOC entry 5088 (class 0 OID 0)
+-- Dependencies: 227
+-- Name: SEQUENCE partners_partnerid_seq; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON SEQUENCE public.partners_partnerid_seq TO systemadministrator;
+GRANT SELECT,USAGE ON SEQUENCE public.partners_partnerid_seq TO clientmanager;
+GRANT SELECT,USAGE ON SEQUENCE public.partners_partnerid_seq TO travelerapprole;
+
+
+--
+-- TOC entry 5089 (class 0 OID 0)
+-- Dependencies: 236
+-- Name: TABLE payments; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.payments TO systemadministrator;
+GRANT SELECT,INSERT,UPDATE ON TABLE public.payments TO financialspecialist;
+GRANT SELECT ON TABLE public.payments TO travelerapprole;
+
+
+--
+-- TOC entry 5091 (class 0 OID 0)
+-- Dependencies: 235
+-- Name: SEQUENCE payments_paymentid_seq; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON SEQUENCE public.payments_paymentid_seq TO systemadministrator;
+GRANT SELECT,USAGE ON SEQUENCE public.payments_paymentid_seq TO clientmanager;
+GRANT USAGE ON SEQUENCE public.payments_paymentid_seq TO financialspecialist;
+GRANT SELECT,USAGE ON SEQUENCE public.payments_paymentid_seq TO travelerapprole;
+
+
+--
+-- TOC entry 5092 (class 0 OID 0)
+-- Dependencies: 238
+-- Name: TABLE reviews; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.reviews TO systemadministrator;
+GRANT SELECT,INSERT,UPDATE ON TABLE public.reviews TO clientmanager;
+GRANT SELECT,INSERT ON TABLE public.reviews TO travelerapprole;
+GRANT SELECT ON TABLE public.reviews TO financialspecialist;
+
+
+--
+-- TOC entry 5094 (class 0 OID 0)
+-- Dependencies: 237
+-- Name: SEQUENCE reviews_reviewid_seq; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON SEQUENCE public.reviews_reviewid_seq TO systemadministrator;
+GRANT SELECT,USAGE ON SEQUENCE public.reviews_reviewid_seq TO clientmanager;
+GRANT SELECT,USAGE ON SEQUENCE public.reviews_reviewid_seq TO travelerapprole;
+
+
+--
+-- TOC entry 5095 (class 0 OID 0)
+-- Dependencies: 230
+-- Name: TABLE tours; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.tours TO systemadministrator;
+GRANT SELECT,INSERT,UPDATE ON TABLE public.tours TO clientmanager;
+GRANT SELECT ON TABLE public.tours TO financialspecialist;
+GRANT SELECT,DELETE,UPDATE ON TABLE public.tours TO travelerapprole;
+
+
+--
+-- TOC entry 5097 (class 0 OID 0)
+-- Dependencies: 229
+-- Name: SEQUENCE tours_tourid_seq; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON SEQUENCE public.tours_tourid_seq TO systemadministrator;
+GRANT SELECT,USAGE ON SEQUENCE public.tours_tourid_seq TO clientmanager;
+GRANT SELECT,USAGE ON SEQUENCE public.tours_tourid_seq TO travelerapprole;
+
+
+--
+-- TOC entry 5098 (class 0 OID 0)
+-- Dependencies: 222
+-- Name: TABLE tourtypes; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.tourtypes TO systemadministrator;
+GRANT SELECT ON TABLE public.tourtypes TO clientmanager;
+GRANT SELECT ON TABLE public.tourtypes TO travelerapprole;
+
+
+--
+-- TOC entry 5100 (class 0 OID 0)
+-- Dependencies: 221
+-- Name: SEQUENCE tourtypes_tourtypeid_seq; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON SEQUENCE public.tourtypes_tourtypeid_seq TO systemadministrator;
+GRANT SELECT,USAGE ON SEQUENCE public.tourtypes_tourtypeid_seq TO clientmanager;
+GRANT SELECT,USAGE ON SEQUENCE public.tourtypes_tourtypeid_seq TO travelerapprole;
+
+
+--
+-- TOC entry 5101 (class 0 OID 0)
+-- Dependencies: 241
+-- Name: TABLE view_tourratings; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT SELECT ON TABLE public.view_tourratings TO travelerapprole;
+GRANT SELECT ON TABLE public.view_tourratings TO clientmanager;
+
+
+-- Completed on 2026-02-06 22:02:39
+
+--
+-- PostgreSQL database dump complete
+--
+
+\unrestrict lAEiWAUfdgcIeN6zPqTHlUhnOaY7qJiu7iGaWQcETpy0zNjP4Vp6SmJLtAhQCVi
+

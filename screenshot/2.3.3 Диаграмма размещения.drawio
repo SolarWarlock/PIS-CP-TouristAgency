@@ -1,0 +1,96 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.0.3 Chrome/140.0.7339.249 Electron/38.7.0 Safari/537.36" version="29.0.3">
+  <diagram name="Страница-1" id="0GgAGvR8xwAYkXtPjvsa">
+    <mxGraphModel dx="1226" dy="746" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="a5rALebLW1gfDdbHeIXj-3" value="Сервер турагентства" style="verticalAlign=top;align=left;spacingTop=8;spacingLeft=2;spacingRight=12;shape=cube;size=10;direction=south;fontStyle=4;html=1;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="483" y="230" width="250" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-4" value="&lt;font style=&quot;font-size: 14px;&quot;&gt;Сети турагентства&lt;/font&gt;" style="shape=cube;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;darkOpacity=0.05;darkOpacity2=0.1;flipH=1;" vertex="1" parent="1">
+          <mxGeometry x="522" y="420" width="160" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-1" value="БД" style="shape=datastore;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="660" y="280" width="60" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-13" value="&lt;span style=&quot;color: rgb(50, 48, 44); text-align: start;&quot;&gt;&lt;font face=&quot;Helvetica&quot; style=&quot;font-size: 14px;&quot;&gt;СУБД&lt;/font&gt;&lt;/span&gt;" style="shape=module;align=left;spacingLeft=20;align=center;verticalAlign=top;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="510" y="280" width="130" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-14" value="" style="group" vertex="1" connectable="0" parent="1">
+          <mxGeometry x="840" y="640" width="330" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-10" value="&lt;font style=&quot;font-size: 14px;&quot;&gt;ПК Администратора&lt;/font&gt;" style="verticalAlign=top;align=left;spacingTop=8;spacingLeft=2;spacingRight=12;shape=cube;size=10;direction=south;fontStyle=4;html=1;whiteSpace=wrap;" vertex="1" parent="a5rALebLW1gfDdbHeIXj-14">
+          <mxGeometry width="330" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-11" value="TouristApp.exe" style="shape=module;align=left;spacingLeft=20;align=center;verticalAlign=top;whiteSpace=wrap;html=1;" vertex="1" parent="a5rALebLW1gfDdbHeIXj-14">
+          <mxGeometry x="27" y="50" width="130" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-12" value="pgAdmin" style="shape=module;align=left;spacingLeft=20;align=center;verticalAlign=top;whiteSpace=wrap;html=1;" vertex="1" parent="a5rALebLW1gfDdbHeIXj-14">
+          <mxGeometry x="180" y="50" width="130" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-15" value="" style="group" vertex="1" connectable="0" parent="1">
+          <mxGeometry x="590" y="640" width="180" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-6" value="&lt;font style=&quot;font-size: 14px;&quot;&gt;ПК Финансового специалиста&lt;/font&gt;" style="verticalAlign=top;align=left;spacingTop=8;spacingLeft=2;spacingRight=12;shape=cube;size=10;direction=south;fontStyle=4;html=1;whiteSpace=wrap;" vertex="1" parent="a5rALebLW1gfDdbHeIXj-15">
+          <mxGeometry width="180" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-9" value="TouristApp.exe (Finance view)" style="shape=module;align=left;spacingLeft=20;align=center;verticalAlign=top;whiteSpace=wrap;html=1;" vertex="1" parent="a5rALebLW1gfDdbHeIXj-15">
+          <mxGeometry x="34" y="50" width="130" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-16" value="" style="group" vertex="1" connectable="0" parent="1">
+          <mxGeometry x="340" y="640" width="180" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-5" value="&lt;font style=&quot;font-size: 14px;&quot;&gt;ПК Менеджера&lt;/font&gt;" style="verticalAlign=top;align=left;spacingTop=8;spacingLeft=2;spacingRight=12;shape=cube;size=10;direction=south;fontStyle=4;html=1;whiteSpace=wrap;" vertex="1" parent="a5rALebLW1gfDdbHeIXj-16">
+          <mxGeometry width="180" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-8" value="TouristApp.exe (Maneger view)" style="shape=module;align=left;spacingLeft=20;align=center;verticalAlign=top;whiteSpace=wrap;html=1;" vertex="1" parent="a5rALebLW1gfDdbHeIXj-16">
+          <mxGeometry x="27" y="50" width="130" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-17" value="" style="group" vertex="1" connectable="0" parent="1">
+          <mxGeometry x="100" y="650" width="180" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-7" value="&lt;font style=&quot;font-size: 14px;&quot;&gt;ПК Клиента&lt;/font&gt;" style="verticalAlign=top;align=left;spacingTop=8;spacingLeft=2;spacingRight=12;shape=cube;size=10;direction=south;fontStyle=4;html=1;whiteSpace=wrap;" vertex="1" parent="a5rALebLW1gfDdbHeIXj-17">
+          <mxGeometry width="180" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-2" value="TouristApp.exe (Client view)" style="shape=module;align=left;spacingLeft=20;align=center;verticalAlign=top;whiteSpace=wrap;html=1;" vertex="1" parent="a5rALebLW1gfDdbHeIXj-17">
+          <mxGeometry x="27" y="50" width="130" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-19" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0;entryDx=90;entryDy=90;entryPerimeter=0;" edge="1" parent="1" source="a5rALebLW1gfDdbHeIXj-5" target="a5rALebLW1gfDdbHeIXj-4">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="430" y="600" />
+              <mxPoint x="592" y="600" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0;entryDx=90;entryDy=90;entryPerimeter=0;" edge="1" parent="1" source="a5rALebLW1gfDdbHeIXj-6" target="a5rALebLW1gfDdbHeIXj-4">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="680" y="600" />
+              <mxPoint x="592" y="600" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0;entryDx=90;entryDy=90;entryPerimeter=0;" edge="1" parent="1" source="a5rALebLW1gfDdbHeIXj-10" target="a5rALebLW1gfDdbHeIXj-4">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1005" y="600" />
+              <mxPoint x="592" y="600" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-22" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0;entryDx=90;entryDy=90;entryPerimeter=0;" edge="1" parent="1" source="a5rALebLW1gfDdbHeIXj-7" target="a5rALebLW1gfDdbHeIXj-4">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="190" y="600" />
+              <mxPoint x="592" y="600" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a5rALebLW1gfDdbHeIXj-24" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0;entryDx=120;entryDy=130;entryPerimeter=0;" edge="1" parent="1" source="a5rALebLW1gfDdbHeIXj-4" target="a5rALebLW1gfDdbHeIXj-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
